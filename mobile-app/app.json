@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "StarkDrive",
+    "slug": "StarkDrive",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "permissions": [
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.stark.drive",
+      "usesCleartextTraffic": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Stark Drive to use Face ID."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Stark Drive to access your photos.",
+          "savePhotosPermission": "Allow Stark Drive to save photos.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
+      "expo-font",
+      "expo-build-properties"
+    ]
+  }
+}

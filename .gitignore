@@ -1,0 +1,5 @@
+.env
+data/
+mobile-app/node_modules/
+mobile-app/.expo/
+server/target/

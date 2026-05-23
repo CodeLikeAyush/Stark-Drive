@@ -1,0 +1,571 @@
+import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlashList } from '@shopify/flash-list';
+import { ThemeContext } from '../theme/ThemeContext';
+import { AuthContext } from '../context/AuthContext';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import { BlurView } from 'expo-blur';
+import axios from 'axios';
+import { encryptFileAsync, decryptFileAsync } from '../utils/crypto';
+import client from '../api/client';
+
+export default function VaultScreen({ route, navigation }) {
+  const { vaultPin } = route.params;
+  const { theme } = useContext(ThemeContext);
+  const { userToken } = useContext(AuthContext);
+
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [alertData, setAlertData] = useState({ visible: false, title: '', message: '', confirmText: '', onConfirm: null, confirmStyle: 'default' });
+  const appState = useRef(AppState.currentState);
+  const isSystemUiActive = useRef(false);
+
+  // Offline states
+  const [offlineFiles, setOfflineFiles] = useState({});
+  const [offlineTogglingId, setOfflineTogglingId] = useState(null);
+  const OFFLINE_VAULT_DIR = `${FileSystem.documentDirectory}offline_vault/`;
+  const REGISTRY_FILE = `${FileSystem.documentDirectory}offline_vault_registry.json`;
+
+  // Item Action Menu State
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [isActionMenuVisible, setIsActionMenuVisible] = useState(false);
+
+  // Lock the vault if the user switches to a different tab/screen
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        // This runs when the screen loses navigation focus
+        navigation.replace('VaultAuth');
+      };
+    }, [navigation])
+  );
+
+  useEffect(() => {
+    fetchVaultFiles();
+    initOffline();
+  }, []);
+
+  const initOffline = async () => {
+    try {
+      const dirInfo = await FileSystem.getInfoAsync(OFFLINE_VAULT_DIR);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(OFFLINE_VAULT_DIR, { intermediates: true });
+      }
+      const regInfo = await FileSystem.getInfoAsync(REGISTRY_FILE);
+      if (regInfo.exists) {
+        const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
+        setOfflineFiles(JSON.parse(contents));
+      }
+    } catch (e) {
+      console.warn('Failed to init offline vault registry', e);
+    }
+  };
+
+  const saveRegistry = async (newRegistry) => {
+    setOfflineFiles(newRegistry);
+    try {
+      await FileSystem.writeAsStringAsync(REGISTRY_FILE, JSON.stringify(newRegistry));
+    } catch (e) {
+      console.warn('Failed to save offline vault registry', e);
+    }
+  };
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (
+        appState.current.match(/active/) &&
+        nextAppState.match(/inactive|background/) &&
+        !isSystemUiActive.current
+      ) {
+        // App has gone to the background or screen is locked/inactive
+        navigation.replace('VaultAuth');
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [navigation]);
+
+  const fetchVaultFiles = async () => {
+    setLoading(true);
+    try {
+      const response = await client.get('/drive/vault/list');
+      setFiles(response.data || []);
+    } catch (e) {
+      console.warn("Could not fetch vault files", e);
+      setFiles([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpload = async () => {
+    try {
+      isSystemUiActive.current = true;
+      const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+      isSystemUiActive.current = false;
+      
+      if (result.canceled) return;
+
+      const file = result.assets[0];
+      setIsUploading(true);
+
+      // 1. Encrypt locally
+      const encryptedUri = await encryptFileAsync(file.uri, vaultPin);
+
+      const uploadResult = await FileSystem.uploadAsync(
+        `${client.defaults.baseURL}/drive/upload`,
+        encryptedUri,
+        {
+          httpMethod: 'POST',
+          uploadType: 1, // MULTIPART
+          fieldName: 'file',
+          mimeType: 'application/octet-stream',
+          parameters: {
+            originalName: file.name,
+            isVault: 'true'
+          },
+          headers: {
+            Authorization: `Bearer ${userToken}`
+          }
+        }
+      );
+
+      if (uploadResult.status !== 200) {
+        throw new Error("Upload failed with status " + uploadResult.status);
+      }
+
+      // Cleanup temp encrypted file
+      await FileSystem.deleteAsync(encryptedUri, { idempotent: true });
+
+      fetchVaultFiles();
+    } catch (e) {
+      console.error(e);
+      setAlertData({
+        visible: true,
+        title: "Upload Failed",
+        message: "Could not encrypt and upload file. Is it too large?",
+        confirmText: "OK",
+        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleFilePress = async (file) => {
+    try {
+      setProcessingId(file.id);
+
+      // 1. Download Ciphertext (Or use offline version)
+      let encryptedUriToDecrypt = null;
+      let tempLocalEncUri = `${FileSystem.cacheDirectory}dl_${file.id}.enc`;
+      let usingOffline = false;
+
+      if (offlineFiles[file.id]) {
+        const localPath = offlineFiles[file.id];
+        const info = await FileSystem.getInfoAsync(localPath);
+        if (info.exists) {
+          encryptedUriToDecrypt = localPath;
+          usingOffline = true;
+        }
+      }
+
+      if (!encryptedUriToDecrypt) {
+        const downloadUrl = `${client.defaults.baseURL}/drive/download/${file.id}`;
+        
+        const { uri, status } = await FileSystem.downloadAsync(downloadUrl, tempLocalEncUri, {
+          headers: { Authorization: `Bearer ${userToken}` }
+        });
+
+        if (status !== 200) throw new Error("Download failed");
+        encryptedUriToDecrypt = uri;
+      }
+
+      // 2. Decrypt locally
+      // We need to extract the extension to help Sharing open it correctly
+      const extMatch = file.originalFilename.match(/\.[^.]+$/);
+      const ext = extMatch ? extMatch[0] : '';
+      
+      const decryptedUri = await decryptFileAsync(encryptedUriToDecrypt, vaultPin, ext);
+
+      // 3. Open
+      if (await Sharing.isAvailableAsync()) {
+        isSystemUiActive.current = true;
+        await Sharing.shareAsync(decryptedUri);
+        isSystemUiActive.current = false;
+      } else {
+        setAlertData({
+          visible: true,
+          title: "Error",
+          message: "Sharing is not available on this device",
+          confirmText: "OK",
+          onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+        });
+      }
+
+      // Cleanup
+      if (!usingOffline) {
+        await FileSystem.deleteAsync(tempLocalEncUri, { idempotent: true });
+      }
+      // Note: We might want to keep the decrypted file around temporarily, but for maximum security we delete it after sharing?
+      // Unfortunately expo-sharing is asynchronous and might need the file. We'll leave it in cache, it gets cleared by OS eventually.
+      
+    } catch (e) {
+      console.error(e);
+      setAlertData({
+        visible: true,
+        title: "Decryption Failed",
+        message: "Could not open file. PIN might be invalid or file is corrupted.",
+        confirmText: "OK",
+        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+      });
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleLongPress = (item) => {
+    setSelectedItem(item);
+    setIsActionMenuVisible(true);
+  };
+
+  const toggleOffline = async () => {
+    if (!selectedItem) return;
+    const fileId = selectedItem.id;
+    const isOffline = !!offlineFiles[fileId];
+
+    setIsActionMenuVisible(false);
+    setOfflineTogglingId(fileId);
+
+    try {
+      if (isOffline) {
+        const localPath = offlineFiles[fileId];
+        const info = await FileSystem.getInfoAsync(localPath);
+        if (info.exists) await FileSystem.deleteAsync(localPath);
+        
+        const newReg = { ...offlineFiles };
+        delete newReg[fileId];
+        await saveRegistry(newReg);
+      } else {
+        const downloadUrl = `${client.defaults.baseURL}/drive/download/${fileId}`;
+        const localPath = `${OFFLINE_VAULT_DIR}${fileId}_enc`;
+        
+        const { status } = await FileSystem.downloadAsync(downloadUrl, localPath, {
+          headers: { Authorization: `Bearer ${userToken}` }
+        });
+
+        if (status === 200) {
+          const newReg = { ...offlineFiles, [fileId]: localPath };
+          await saveRegistry(newReg);
+        } else {
+          setAlertData({
+            visible: true, title: "Error", message: "Failed to download file for offline use.",
+            confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+          });
+        }
+      }
+    } catch (e) {
+      setAlertData({
+        visible: true, title: "Error", message: "Error toggling offline mode.",
+        confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+      });
+    } finally {
+      setOfflineTogglingId(null);
+    }
+  };
+
+  const promptDelete = () => {
+    setIsActionMenuVisible(false);
+    setTimeout(() => {
+      setAlertData({
+        visible: true,
+        title: "Delete File",
+        message: `Permanently delete "${selectedItem?.originalFilename}"?`,
+        confirmText: "Delete",
+        confirmStyle: "destructive",
+        onConfirm: confirmDelete
+      });
+    }, 300);
+  };
+
+  const confirmDelete = async () => {
+    setAlertData(prev => ({ ...prev, visible: false }));
+    try {
+      if (offlineFiles[selectedItem.id]) {
+        await FileSystem.deleteAsync(offlineFiles[selectedItem.id], { idempotent: true });
+        const newReg = { ...offlineFiles };
+        delete newReg[selectedItem.id];
+        await saveRegistry(newReg);
+      }
+      await client.delete(`/drive/items/file/${selectedItem.id}`);
+      fetchVaultFiles();
+    } catch (e) {
+      setAlertData({
+        visible: true,
+        title: "Error",
+        message: "Could not delete",
+        confirmText: "OK",
+        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+      });
+    }
+  };
+
+
+  const renderItem = ({ item }) => (
+    <TouchableOpacity 
+      style={[styles.fileItem, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}
+      onPress={() => handleFilePress(item)}
+      onLongPress={() => handleLongPress(item)}
+    >
+      <View style={[styles.iconContainer, { backgroundColor: theme.background }]}>
+        <MaterialCommunityIcons name="file-lock" size={28} color={theme.primary} />
+      </View>
+      <View style={styles.textContainer}>
+        <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>{item.originalFilename}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={[styles.fileSize, { color: theme.textSecondary }]}>{(item.sizeBytes / 1024).toFixed(1)} KB • Encrypted</Text>
+          {offlineTogglingId === item.id ? (
+            <ActivityIndicator size="small" color={theme.primary} style={{ marginLeft: 8, transform: [{ scale: 0.6 }] }} />
+          ) : offlineFiles[item.id] ? (
+            <MaterialCommunityIcons name="cellphone-check" size={14} color={theme.primary} style={{ marginLeft: 8 }} />
+          ) : null}
+        </View>
+      </View>
+      {processingId === item.id ? (
+        <ActivityIndicator color={theme.primary} />
+      ) : (
+        <TouchableOpacity onPress={() => handleLongPress(item)} style={{ padding: 4 }}>
+          <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.textSecondary} />
+        </TouchableOpacity>
+      )}
+    </TouchableOpacity>
+  );
+
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+      <View style={styles.tabletWrapper}>
+      {loading ? (
+        <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
+      ) : (
+        <FlashList
+          data={files}
+          keyExtractor={item => item.id.toString()}
+          renderItem={renderItem}
+          estimatedItemSize={70}
+          contentContainerStyle={{ padding: 16 }}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <MaterialCommunityIcons name="safe" size={80} color={theme.border} />
+              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Your Vault is empty.</Text>
+            </View>
+          }
+        />
+      )}
+      </View>
+
+      {/* FAB */}
+      <TouchableOpacity 
+        style={[styles.fab, { backgroundColor: theme.primary }]}
+        onPress={handleUpload}
+        disabled={isUploading}
+      >
+        {isUploading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <MaterialCommunityIcons name="plus" size={30} color="#fff" />
+        )}
+      </TouchableOpacity>
+
+      {/* Reusable Alert Modal */}
+      <Modal visible={alertData.visible} transparent animationType="fade">
+        <BlurView intensity={30} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>{alertData.title}</Text>
+            <Text style={[styles.modalMessage, { color: theme.textSecondary }]}>{alertData.message}</Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButton} onPress={() => setAlertData({ ...alertData, visible: false })}>
+                <Text style={[styles.modalButtonText, { color: theme.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalButton} onPress={alertData.onConfirm}>
+                <Text style={[styles.modalButtonText, { 
+                  color: alertData.confirmStyle === 'destructive' ? '#ff3b30' : theme.primary, 
+                  fontWeight: 'bold' 
+                }]}>
+                  {alertData.confirmText}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Action Menu Bottom Sheet */}
+      <Modal visible={isActionMenuVisible} transparent animationType="slide">
+        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsActionMenuVisible(false)}>
+          <View style={[styles.bottomSheet, { backgroundColor: theme.surface }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={[styles.sheetTitle, { color: theme.text }]} numberOfLines={1}>
+              {selectedItem?.originalFilename}
+            </Text>
+
+            <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
+              <MaterialCommunityIcons 
+                name={offlineFiles[selectedItem?.id] ? "cellphone-check" : "cellphone-arrow-down"} 
+                size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
+              />
+              <Text style={[styles.sheetButtonText, { color: theme.text }]}>
+                {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Available Offline"}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0 }]} onPress={promptDelete}>
+              <MaterialCommunityIcons name="delete" size={24} color="#ff3b30" style={styles.sheetIcon} />
+              <Text style={[styles.sheetButtonText, { color: '#ff3b30', fontWeight: '500' }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  tabletWrapper: { flex: 1, width: '100%', maxWidth: 700, alignSelf: 'center' },
+  fileItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  iconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  textContainer: {
+    flex: 1,
+    marginRight: 8,
+  },
+  fileName: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  fileSize: {
+    fontSize: 13,
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 8,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 100,
+  },
+  emptyText: {
+    marginTop: 16,
+    fontSize: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  modalMessage: {
+    fontSize: 16,
+    marginBottom: 24,
+    lineHeight: 22,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 16,
+  },
+  modalButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  bottomSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingTop: 12,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#ccc',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  sheetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  sheetIcon: {
+    marginRight: 16,
+  },
+  sheetButtonText: {
+    fontSize: 16,
+  }
+});
