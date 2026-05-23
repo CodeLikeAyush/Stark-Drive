@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 
 export default function ProfileScreen() {
-  const { logout, userEmail, userName, updateUserName, autoBackupEnabled, setAutoBackupEnabled, disconnectServer } = useContext(AuthContext);
+  const { logout, userEmail, userName, updateUserName, autoBackupEnabled, setAutoBackupEnabled, disconnectServer, isOfflineMode, disableOfflineMode } = useContext(AuthContext);
   const { theme, themeMode, setThemeMode } = useContext(ThemeContext);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showEditNameModal, setShowEditNameModal] = useState(false);
@@ -19,6 +19,10 @@ export default function ProfileScreen() {
 
   React.useEffect(() => {
     const fetchStorage = async () => {
+      if (isOfflineMode) {
+        setStorageUsed('offline');
+        return;
+      }
       try {
         const client = require('../api/client').default;
         const res = await client.get('/drive/storage');
@@ -28,7 +32,7 @@ export default function ProfileScreen() {
       }
     };
     fetchStorage();
-  }, []);
+  }, [isOfflineMode]);
 
   const formatBytes = (bytes) => {
     if (bytes === 0 || bytes === null) return '0 B';
@@ -106,18 +110,33 @@ export default function ProfileScreen() {
             <Text style={[styles.rowText, { color: theme.text }]}>Storage Used</Text>
           </View>
           <Text style={[styles.rowValue, { color: theme.textSecondary, fontWeight: 'bold' }]}>
-            {storageUsed === null ? 'Calculating...' : formatBytes(storageUsed)}
+            {storageUsed === 'offline' ? 'Offline Mode' : (storageUsed === null ? 'Calculating...' : formatBytes(storageUsed))}
           </Text>
         </TouchableOpacity>
       </View>
 
       <View style={[styles.section, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-        <TouchableOpacity style={[styles.row, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]} onPress={disconnectServer}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Ionicons name="power-outline" size={22} color={theme.textSecondary} style={{ marginRight: 12 }} />
-            <Text style={[styles.rowText, { color: theme.textSecondary }]}>Disconnect Server</Text>
-          </View>
-        </TouchableOpacity>
+        {isOfflineMode ? (
+          <TouchableOpacity 
+            style={[styles.row, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]} 
+            onPress={async () => {
+              await disconnectServer();
+              await disableOfflineMode();
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="link-outline" size={22} color={theme.primary} style={{ marginRight: 12 }} />
+              <Text style={[styles.rowText, { color: theme.primary, fontWeight: 'bold' }]}>Connect Server</Text>
+            </View>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity style={[styles.row, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]} onPress={disconnectServer}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Ionicons name="power-outline" size={22} color={theme.textSecondary} style={{ marginRight: 12 }} />
+              <Text style={[styles.rowText, { color: theme.textSecondary }]}>Disconnect Server</Text>
+            </View>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.row} onPress={() => setShowLogoutModal(true)}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Ionicons name="log-out-outline" size={22} color={theme.destructive} style={{ marginRight: 12 }} />

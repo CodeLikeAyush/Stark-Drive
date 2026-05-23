@@ -17,7 +17,7 @@ import client from '../api/client';
 export default function VaultScreen({ route, navigation }) {
   const { vaultPin } = route.params;
   const { theme } = useContext(ThemeContext);
-  const { userToken } = useContext(AuthContext);
+  const { userToken, isOfflineMode } = useContext(AuthContext);
 
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -97,12 +97,39 @@ export default function VaultScreen({ route, navigation }) {
 
   const fetchVaultFiles = async () => {
     setLoading(true);
+    if (isOfflineMode) {
+      let registry = offlineFiles;
+      if (Object.keys(registry).length === 0) {
+         try {
+           const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
+           registry = JSON.parse(contents);
+         } catch(e) {}
+      }
+      const offlineItems = Object.entries(registry).map(([id, val]) => {
+        if (typeof val === 'object') return val;
+        return { id, originalFilename: 'Vault File (Offline)', localPath: val };
+      });
+      setFiles(offlineItems);
+      setLoading(false);
+      return;
+    }
     try {
       const response = await client.get('/drive/vault/list');
       setFiles(response.data || []);
     } catch (e) {
       console.warn("Could not fetch vault files", e);
-      setFiles([]);
+      let registry = offlineFiles;
+      if (Object.keys(registry).length === 0) {
+         try {
+           const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
+           registry = JSON.parse(contents);
+         } catch(err) {}
+      }
+      const offlineItems = Object.entries(registry).map(([id, val]) => {
+        if (typeof val === 'object') return val;
+        return { id, originalFilename: 'Vault File (Offline)', localPath: val };
+      });
+      setFiles(offlineItems);
     } finally {
       setLoading(false);
     }
@@ -172,7 +199,7 @@ export default function VaultScreen({ route, navigation }) {
       let usingOffline = false;
 
       if (offlineFiles[file.id]) {
-        const localPath = offlineFiles[file.id];
+        const localPath = typeof offlineFiles[file.id] === 'string' ? offlineFiles[file.id] : offlineFiles[file.id].localPath;
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) {
           encryptedUriToDecrypt = localPath;
@@ -249,7 +276,7 @@ export default function VaultScreen({ route, navigation }) {
 
     try {
       if (isOffline) {
-        const localPath = offlineFiles[fileId];
+        const localPath = typeof offlineFiles[fileId] === 'string' ? offlineFiles[fileId] : offlineFiles[fileId].localPath;
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) await FileSystem.deleteAsync(localPath);
         
@@ -265,7 +292,7 @@ export default function VaultScreen({ route, navigation }) {
         });
 
         if (status === 200) {
-          const newReg = { ...offlineFiles, [fileId]: localPath };
+          const newReg = { ...offlineFiles, [fileId]: { ...selectedItem, localPath } };
           await saveRegistry(newReg);
         } else {
           setAlertData({
@@ -333,7 +360,7 @@ export default function VaultScreen({ route, navigation }) {
       <View style={styles.textContainer}>
         <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>{item.originalFilename}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Text style={[styles.fileSize, { color: theme.textSecondary }]}>{(item.sizeBytes / 1024).toFixed(1)} KB • Encrypted</Text>
+          <Text style={[styles.fileSize, { color: theme.textSecondary }]}>{item.sizeBytes != null ? (item.sizeBytes / 1024).toFixed(1) + ' KB' : 'Offline'} • Encrypted</Text>
           {offlineTogglingId === item.id ? (
             <ActivityIndicator size="small" color={theme.primary} style={{ marginLeft: 8, transform: [{ scale: 0.6 }] }} />
           ) : offlineFiles[item.id] ? (

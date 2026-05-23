@@ -31,6 +31,7 @@ export const AuthProvider = ({ children }) => {
   const [hasVaultSetup, setHasVaultSetup] = useState(false);
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
   const [backupAlbums, setBackupAlbums] = useState([]);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -46,6 +47,10 @@ export const AuthProvider = ({ children }) => {
         
         backupEnabledStr = await SecureStore.getItemAsync('autoBackupEnabled');
         albumsStr = await SecureStore.getItemAsync('backupAlbums');
+        const offlineModeStr = await SecureStore.getItemAsync('isOfflineMode');
+        if (offlineModeStr === 'true') {
+          setIsOfflineMode(true);
+        }
       } catch (e) {
         console.warn("SecureStore error", e);
       }
@@ -151,10 +156,20 @@ export const AuthProvider = ({ children }) => {
     delete client.defaults.headers.common['Authorization'];
   };
 
+  const enableOfflineMode = async () => {
+    await SecureStore.setItemAsync('isOfflineMode', 'true');
+    setIsOfflineMode(true);
+  };
+
+  const disableOfflineMode = async () => {
+    await SecureStore.deleteItemAsync('isOfflineMode');
+    setIsOfflineMode(false);
+  };
+
   return (
     <AuthContext.Provider value={{ 
-      userToken, userEmail, userName, isLoading, autoBackupEnabled, backupAlbums, hasVaultSetup, serverUrl,
-      login, register, logout, updateUserName, 
+      userToken, userEmail, userName, isLoading, autoBackupEnabled, backupAlbums, hasVaultSetup, serverUrl, isOfflineMode,
+      login, register, logout, updateUserName, enableOfflineMode, disableOfflineMode, 
       setAutoBackupEnabled: updateAutoBackupEnabled, 
       setBackupAlbums: updateBackupAlbums,
       setHasVaultSetup,

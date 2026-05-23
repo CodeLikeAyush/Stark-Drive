@@ -111,7 +111,8 @@ export default function TimelineScreen({ navigation }) {
       if (photo.isLocal) {
         await Sharing.shareAsync(photo.uri);
       } else if (offlinePhotos[photo.id]) {
-        await Sharing.shareAsync(offlinePhotos[photo.id]);
+        const localPath = typeof offlinePhotos[photo.id] === 'string' ? offlinePhotos[photo.id] : offlinePhotos[photo.id].localPath;
+        await Sharing.shareAsync(localPath);
       } else {
         // Download remote photo first
         const ext = photo.filename ? (photo.filename.split('.').pop() || 'jpg') : 'jpg';
@@ -137,7 +138,8 @@ export default function TimelineScreen({ navigation }) {
     try {
       for (const photo of selectedArr) {
         if (allOffline) {
-          const localPath = newReg[photo.id];
+          const stored = newReg[photo.id];
+          const localPath = typeof stored === 'string' ? stored : stored?.localPath;
           if (localPath) {
              const info = await FileSystem.getInfoAsync(localPath);
              if (info.exists) await FileSystem.deleteAsync(localPath, { idempotent: true });
@@ -150,7 +152,7 @@ export default function TimelineScreen({ navigation }) {
             const localPath = `${OFFLINE_PHOTOS_DIR}${photo.id}.${ext}`;
             const { status } = await FileSystem.downloadAsync(photo.uri, localPath, { headers: photo.headers });
             if (status === 200) {
-              newReg[photo.id] = localPath;
+              newReg[photo.id] = { ...photo, localPath };
               hasChanges = true;
             }
           }
@@ -323,7 +325,7 @@ export default function TimelineScreen({ navigation }) {
         <Image 
           source={
             offlinePhotos[item.id] 
-              ? { uri: offlinePhotos[item.id] } 
+              ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath } 
               : (item.headers ? { uri: item.uri, headers: item.headers } : { uri: item.uri })
           } 
           style={[styles.imageMock, isSelected && { opacity: 0.6 }]} 

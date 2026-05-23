@@ -10,7 +10,7 @@ const { width } = Dimensions.get('window');
 
 export default function ServerSetupScreen() {
   const { theme } = useContext(ThemeContext);
-  const { connectServer } = useContext(AuthContext);
+  const { connectServer, enableOfflineMode } = useContext(AuthContext);
 
   const [ipAddress, setIpAddress] = useState('');
   const [isDiscovering, setIsDiscovering] = useState(false);
@@ -192,6 +192,14 @@ export default function ServerSetupScreen() {
               <Ionicons name="search" size={18} color={theme.primary} style={{ marginRight: 8 }} />
               <Text style={[styles.outlineButtonText, { color: theme.primary }]}>Scan Network Again</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.offlineButton, { marginTop: 16 }]} 
+              onPress={enableOfflineMode}
+            >
+              <Ionicons name="cloud-offline" size={18} color={theme.textSecondary} style={{ marginRight: 8 }} />
+              <Text style={{ color: theme.textSecondary, fontWeight: '600' }}>Use Offline Mode</Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -287,5 +295,11 @@ const styles = StyleSheet.create({
   outlineButtonText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  offlineButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
   }
 });

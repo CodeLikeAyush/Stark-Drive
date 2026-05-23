@@ -68,12 +68,29 @@ export function useMediaBackup() {
   const loadTimeline = async () => {
     try {
       setLoading(true);
-      console.log("[MediaBackup] loadTimeline: Fetching remote photos...");
-      // 1. Fetch remote synced photos
-      const remoteRes = await client.get('/drive/photos');
-      const remoteFiles = remoteRes.data || [];
-      console.log(`[MediaBackup] Fetched ${remoteFiles.length} remote photos.`);
-      const remoteFilenames = new Set(remoteFiles.map(f => f.originalFilename));
+      let remoteFiles = [];
+      try {
+        console.log("[MediaBackup] loadTimeline: Fetching remote photos...");
+        const remoteRes = await client.get('/drive/photos');
+        remoteFiles = remoteRes.data || [];
+        console.log(`[MediaBackup] Fetched ${remoteFiles.length} remote photos.`);
+      } catch (e) {
+        console.warn("[MediaBackup] Failed to fetch remote photos, falling back to offline registry", e);
+        try {
+          const regStr = await FileSystem.readAsStringAsync(`${FileSystem.documentDirectory}offline_photos_registry.json`);
+          const registry = JSON.parse(regStr);
+          remoteFiles = Object.entries(registry).map(([id, val]) => {
+            if (typeof val === 'object') return val;
+            return {
+              id: id,
+              originalFilename: val.split('/').pop(),
+              isLocal: false,
+              remoteFileId: id,
+            };
+          });
+        } catch(regErr) {}
+      }
+      const remoteFilenames = new Set(remoteFiles.map(f => f.originalFilename || f.filename));
       
       // 2. Fetch local photos (All photos for display)
       const localAssets = await MediaLibrary.getAssetsAsync({
@@ -101,7 +118,7 @@ export function useMediaBackup() {
         const isSynced = remoteFilenames.has(asset.filename);
         let remoteFileId = null;
         if (isSynced) {
-            const remoteFile = remoteFiles.find(f => f.originalFilename === asset.filename);
+            const remoteFile = remoteFiles.find(f => (f.originalFilename || f.filename) === asset.filename);
             remoteFileId = remoteFile ? remoteFile.id : null;
         }
         
@@ -132,15 +149,16 @@ export function useMediaBackup() {
       // Add remote assets that are NOT local (e.g. deleted from device or from another device)
       const localFilenames = new Set(localAssets.assets.map(a => a.filename));
       remoteFiles.forEach(file => {
-        if (!localFilenames.has(file.originalFilename)) {
+        const filename = file.originalFilename || file.filename;
+        if (!localFilenames.has(filename)) {
           mergedPhotos.push({
-            id: file.id.toString(),
-            uri: `${client.defaults.baseURL}/drive/download/${file.id}`,
-            filename: file.originalFilename,
+            id: file.id ? file.id.toString() : (file.remoteFileId ? file.remoteFileId.toString() : ''),
+            uri: `${client.defaults.baseURL}/drive/download/${file.id || file.remoteFileId}`,
+            filename: filename,
             creationTime: file.creationTime || new Date(file.createdAt || Date.now()).getTime(), // Use precise creationTime if available
             status: 'synced',
             isLocal: false,
-            remoteFileId: file.id,
+            remoteFileId: file.id || file.remoteFileId,
             headers: { Authorization: `Bearer ${userToken}` } // Needed to display image from API
           });
         }

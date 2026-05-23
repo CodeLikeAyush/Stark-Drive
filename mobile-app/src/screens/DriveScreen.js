@@ -50,7 +50,7 @@ export default function DriveScreen({ navigation, route }) {
   const [allFolders, setAllFolders] = useState([]);
 
   const { theme } = useContext(ThemeContext);
-  const { userToken } = useContext(AuthContext);
+  const { userToken, isOfflineMode } = useContext(AuthContext);
 
   const getFileIcon = (contentType) => {
     if (!contentType) return 'file';
@@ -125,6 +125,22 @@ export default function DriveScreen({ navigation, route }) {
   const fetchDirectory = async () => {
     try {
       setLoading(true);
+      if (isOfflineMode) {
+        let registry = offlineFiles;
+        if (Object.keys(registry).length === 0) {
+           try {
+             const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
+             registry = JSON.parse(contents);
+           } catch(e) {}
+        }
+        const offlineItems = Object.entries(registry).map(([id, val]) => {
+          if (typeof val === 'object') return val;
+          return { id, originalFilename: val.split('/').pop(), localPath: val };
+        });
+        setData({ folders: [], files: offlineItems });
+        return;
+      }
+      
       let endpoint;
       if (searchQuery.trim().length > 0) {
         endpoint = `/drive/search?q=${encodeURIComponent(searchQuery.trim())}`;
@@ -135,6 +151,18 @@ export default function DriveScreen({ navigation, route }) {
       setData(res.data);
     } catch (e) {
       console.warn("Failed to fetch directory", e);
+      let registry = offlineFiles;
+      if (Object.keys(registry).length === 0) {
+         try {
+           const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
+           registry = JSON.parse(contents);
+         } catch(err) {}
+      }
+      const offlineItems = Object.entries(registry).map(([id, val]) => {
+        if (typeof val === 'object') return val;
+        return { id, originalFilename: val.split('/').pop(), localPath: val };
+      });
+      setData({ folders: [], files: offlineItems });
     } finally {
       setLoading(false);
     }
@@ -212,7 +240,7 @@ export default function DriveScreen({ navigation, route }) {
 
       // Check if it's available offline
       if (offlineFiles[file.id]) {
-        const localPath = offlineFiles[file.id];
+        const localPath = typeof offlineFiles[file.id] === 'string' ? offlineFiles[file.id] : offlineFiles[file.id].localPath;
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) {
           uriToShare = localPath;
@@ -334,7 +362,7 @@ export default function DriveScreen({ navigation, route }) {
 
     try {
       if (isOffline) {
-        const localPath = offlineFiles[fileId];
+        const localPath = typeof offlineFiles[fileId] === 'string' ? offlineFiles[fileId] : offlineFiles[fileId].localPath;
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) await FileSystem.deleteAsync(localPath);
         
@@ -350,7 +378,7 @@ export default function DriveScreen({ navigation, route }) {
         });
 
         if (status === 200) {
-          const newReg = { ...offlineFiles, [fileId]: localPath };
+          const newReg = { ...offlineFiles, [fileId]: { ...selectedItem, localPath } };
           await saveRegistry(newReg);
         } else {
           showInfoAlert("Failed to download file for offline use.");
@@ -430,7 +458,7 @@ export default function DriveScreen({ navigation, route }) {
           </Text>
           {!isFolder && (
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={[styles.itemSub, { color: theme.textSecondary }]}>{(item.sizeBytes / 1024).toFixed(1)} KB</Text>
+              <Text style={[styles.itemSub, { color: theme.textSecondary }]}>{item.sizeBytes != null ? (item.sizeBytes / 1024).toFixed(1) + ' KB' : 'Offline'}</Text>
               {offlineTogglingId === item.id ? (
                 <ActivityIndicator size="small" color={theme.primary} style={{ marginLeft: 8, transform: [{ scale: 0.6 }] }} />
               ) : offlineFiles[item.id] ? (

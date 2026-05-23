@@ -110,7 +110,7 @@ function VaultStack() {
 }
 
 export default function AppNavigator() {
-  const { userToken, isLoading, serverUrl } = useContext(AuthContext);
+  const { userToken, isLoading, serverUrl, isOfflineMode } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
 
   if (isLoading) {
@@ -124,7 +124,12 @@ export default function AppNavigator() {
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!serverUrl ? (
+        {isOfflineMode ? (
+          <>
+            <Stack.Screen name="Main" component={MainTabs} />
+            <Stack.Screen name="Bin" component={BinScreen} />
+          </>
+        ) : !serverUrl ? (
           <Stack.Screen name="ServerSetup" component={ServerSetupScreen} />
         ) : userToken == null ? (
           <Stack.Screen name="Login" component={LoginScreen} />
