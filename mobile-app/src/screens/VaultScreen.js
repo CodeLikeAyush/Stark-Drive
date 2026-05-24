@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
@@ -13,6 +13,7 @@ import { BlurView } from 'expo-blur';
 import axios from 'axios';
 import { encryptFileAsync, decryptFileAsync } from '../utils/crypto';
 import client from '../api/client';
+import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles } from '../db/Database';
 
 export default function VaultScreen({ route, navigation }) {
   const { vaultPin } = route.params;
@@ -36,10 +37,14 @@ export default function VaultScreen({ route, navigation }) {
   // Item Action Menu State
   const [selectedItem, setSelectedItem] = useState(null);
   const [isActionMenuVisible, setIsActionMenuVisible] = useState(false);
+  const [isRenameModalVisible, setIsRenameModalVisible] = useState(false);
+  const [renameText, setRenameText] = useState('');
 
   // Lock the vault if the user switches to a different tab/screen
   useFocusEffect(
     useCallback(() => {
+      fetchVaultFiles();
+      
       return () => {
         // This runs when the screen loses navigation focus
         navigation.replace('VaultAuth');
@@ -47,35 +52,23 @@ export default function VaultScreen({ route, navigation }) {
     }, [navigation])
   );
 
+  const refreshOfflineState = async () => {
+    try {
+      const rows = await getOfflineFiles(1);
+      const map = {};
+      rows.forEach(r => map[r.id] = r.local_path);
+      setOfflineFiles(map);
+    } catch (e) {
+      console.warn('Failed to refresh offline vault state', e);
+    }
+  };
+
   useEffect(() => {
-    fetchVaultFiles();
-    initOffline();
+    refreshOfflineState();
+    FileSystem.getInfoAsync(OFFLINE_VAULT_DIR).then(dirInfo => {
+      if (!dirInfo.exists) FileSystem.makeDirectoryAsync(OFFLINE_VAULT_DIR, { intermediates: true });
+    });
   }, []);
-
-  const initOffline = async () => {
-    try {
-      const dirInfo = await FileSystem.getInfoAsync(OFFLINE_VAULT_DIR);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(OFFLINE_VAULT_DIR, { intermediates: true });
-      }
-      const regInfo = await FileSystem.getInfoAsync(REGISTRY_FILE);
-      if (regInfo.exists) {
-        const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
-        setOfflineFiles(JSON.parse(contents));
-      }
-    } catch (e) {
-      console.warn('Failed to init offline vault registry', e);
-    }
-  };
-
-  const saveRegistry = async (newRegistry) => {
-    setOfflineFiles(newRegistry);
-    try {
-      await FileSystem.writeAsStringAsync(REGISTRY_FILE, JSON.stringify(newRegistry));
-    } catch (e) {
-      console.warn('Failed to save offline vault registry', e);
-    }
-  };
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
@@ -96,40 +89,34 @@ export default function VaultScreen({ route, navigation }) {
   }, [navigation]);
 
   const fetchVaultFiles = async () => {
-    setLoading(true);
-    if (isOfflineMode) {
-      let registry = offlineFiles;
-      if (Object.keys(registry).length === 0) {
-         try {
-           const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
-           registry = JSON.parse(contents);
-         } catch(e) {}
-      }
-      const offlineItems = Object.entries(registry).map(([id, val]) => {
-        if (typeof val === 'object') return val;
-        return { id, originalFilename: 'Vault File (Offline)', localPath: val };
-      });
-      setFiles(offlineItems);
-      setLoading(false);
-      return;
-    }
     try {
-      const response = await client.get('/drive/vault/list');
-      setFiles(response.data || []);
-    } catch (e) {
-      console.warn("Could not fetch vault files", e);
-      let registry = offlineFiles;
-      if (Object.keys(registry).length === 0) {
-         try {
-           const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
-           registry = JSON.parse(contents);
-         } catch(err) {}
-      }
-      const offlineItems = Object.entries(registry).map(([id, val]) => {
-        if (typeof val === 'object') return val;
-        return { id, originalFilename: 'Vault File (Offline)', localPath: val };
-      });
+      setLoading(true);
+      
+      // 1. Instantly load from SQLite Cache
+      const cachedItems = await getFilesByParent(null, 1);
+      const offlineItems = cachedItems.map(r => ({
+        id: r.id, originalFilename: r.original_filename, contentType: r.content_type, sizeBytes: r.size_bytes, localPath: r.local_path
+      }));
       setFiles(offlineItems);
+      if (offlineItems.length > 0) {
+        setLoading(false);
+      }
+      
+      // 2. Fetch from Network
+      const res = await client.get('/drive/vault/list', { timeout: 3000 });
+      const serverData = res.data || [];
+      
+      // 3. Upsert into SQLite
+      for (const f of serverData) {
+         await upsertFileCache(f, 1);
+      }
+      
+      // 4. Update UI with fresh server data
+      setFiles(serverData);
+      refreshOfflineState();
+      
+    } catch (e) {
+      console.warn("Failed to fetch vault files from network, using cache", e);
     } finally {
       setLoading(false);
     }
@@ -198,11 +185,12 @@ export default function VaultScreen({ route, navigation }) {
       let tempLocalEncUri = `${FileSystem.cacheDirectory}dl_${file.id}.enc`;
       let usingOffline = false;
 
-      if (offlineFiles[file.id]) {
-        const localPath = typeof offlineFiles[file.id] === 'string' ? offlineFiles[file.id] : offlineFiles[file.id].localPath;
-        const info = await FileSystem.getInfoAsync(localPath);
+      // Check SQLite for offline availability
+      const cached = await getFile(file.id);
+      if (cached && cached.is_available_offline === 1 && cached.local_path) {
+        const info = await FileSystem.getInfoAsync(cached.local_path);
         if (info.exists) {
-          encryptedUriToDecrypt = localPath;
+          encryptedUriToDecrypt = cached.local_path;
           usingOffline = true;
         }
       }
@@ -214,7 +202,17 @@ export default function VaultScreen({ route, navigation }) {
           headers: { Authorization: `Bearer ${userToken}` }
         });
 
-        if (status !== 200) throw new Error("Download failed");
+        if (status !== 200) {
+           setAlertData({
+              visible: true,
+              title: "Error",
+              message: "You appear to be offline. Make this file available offline when connected.",
+              confirmText: "OK",
+              onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+           });
+           setDownloadingId(null);
+           return;
+        }
         encryptedUriToDecrypt = uri;
       }
 
@@ -276,13 +274,11 @@ export default function VaultScreen({ route, navigation }) {
 
     try {
       if (isOffline) {
-        const localPath = typeof offlineFiles[fileId] === 'string' ? offlineFiles[fileId] : offlineFiles[fileId].localPath;
+        const localPath = offlineFiles[fileId];
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) await FileSystem.deleteAsync(localPath);
         
-        const newReg = { ...offlineFiles };
-        delete newReg[fileId];
-        await saveRegistry(newReg);
+        await markFileNotAvailableOffline(fileId);
       } else {
         const downloadUrl = `${client.defaults.baseURL}/drive/download/${fileId}`;
         const localPath = `${OFFLINE_VAULT_DIR}${fileId}_enc`;
@@ -292,8 +288,8 @@ export default function VaultScreen({ route, navigation }) {
         });
 
         if (status === 200) {
-          const newReg = { ...offlineFiles, [fileId]: { ...selectedItem, localPath } };
-          await saveRegistry(newReg);
+          await upsertFileCache(selectedItem, 1);
+          await markFileAvailableOffline(fileId, localPath);
         } else {
           setAlertData({
             visible: true, title: "Error", message: "Failed to download file for offline use.",
@@ -301,6 +297,7 @@ export default function VaultScreen({ route, navigation }) {
           });
         }
       }
+      await refreshOfflineState();
     } catch (e) {
       setAlertData({
         visible: true, title: "Error", message: "Error toggling offline mode.",
@@ -323,6 +320,26 @@ export default function VaultScreen({ route, navigation }) {
         onConfirm: confirmDelete
       });
     }, 300);
+  };
+
+  const openRenameModal = () => {
+    setRenameText(selectedItem?.originalFilename);
+    setIsActionMenuVisible(false);
+    setTimeout(() => setIsRenameModalVisible(true), 300);
+  };
+
+  const confirmRename = async () => {
+    if (!renameText.trim()) return;
+    try {
+      await client.patch(`/drive/items/file/${selectedItem.id}/rename?newName=${encodeURIComponent(renameText.trim())}`);
+      setIsRenameModalVisible(false);
+      fetchVaultFiles();
+    } catch (e) {
+      setAlertData({
+        visible: true, title: "Error", message: "Could not rename file",
+        confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+      });
+    }
   };
 
   const confirmDelete = async () => {
@@ -364,7 +381,7 @@ export default function VaultScreen({ route, navigation }) {
           {offlineTogglingId === item.id ? (
             <ActivityIndicator size="small" color={theme.primary} style={{ marginLeft: 8, transform: [{ scale: 0.6 }] }} />
           ) : offlineFiles[item.id] ? (
-            <MaterialCommunityIcons name="cellphone-check" size={14} color={theme.primary} style={{ marginLeft: 8 }} />
+            <MaterialCommunityIcons name="check-circle" size={14} color={theme.primary} style={{ marginLeft: 8 }} />
           ) : null}
         </View>
       </View>
@@ -448,12 +465,17 @@ export default function VaultScreen({ route, navigation }) {
 
             <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
               <MaterialCommunityIcons 
-                name={offlineFiles[selectedItem?.id] ? "cellphone-check" : "cellphone-arrow-down"} 
+                name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
                 size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
               />
               <Text style={[styles.sheetButtonText, { color: theme.text }]}>
-                {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Available Offline"}
+                {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
               </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openRenameModal}>
+              <MaterialCommunityIcons name="pencil" size={24} color={theme.text} style={styles.sheetIcon} />
+              <Text style={[styles.sheetButtonText, { color: theme.text }]}>Rename</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0 }]} onPress={promptDelete}>
@@ -462,6 +484,30 @@ export default function VaultScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      {/* Rename Modal */}
+      <Modal visible={isRenameModalVisible} transparent animationType="fade">
+        <BlurView intensity={30} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Rename File</Text>
+            <TextInput
+              style={[styles.modalInput, { color: theme.text, borderColor: theme.border, borderWidth: 1, padding: 12, borderRadius: 8, marginBottom: 20, fontSize: 16 }]}
+              value={renameText}
+              onChangeText={setRenameText}
+              autoFocus
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButton} onPress={() => setIsRenameModalVisible(false)}>
+                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalButton} onPress={confirmRename} disabled={!renameText?.trim()}>
+                <Text style={{ color: theme.primary, fontSize: 16, fontWeight: 'bold' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
     </SafeAreaView>

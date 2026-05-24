@@ -12,7 +12,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const { login, register, enableOfflineMode } = useContext(AuthContext);
+  const { login, register } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
 
   const handleAuth = async () => {
@@ -109,14 +109,6 @@ export default function LoginScreen() {
               </Text>
             </Text>
           </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.offlineButton} 
-            onPress={enableOfflineMode}
-          >
-            <Ionicons name="cloud-offline" size={18} color={theme.textSecondary} style={{ marginRight: 8 }} />
-            <Text style={{ color: theme.textSecondary, fontWeight: '600' }}>Use Offline Mode</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -197,12 +189,5 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
     fontWeight: '500',
-  },
-  offlineButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    marginTop: 8,
   }
 });

@@ -8,9 +8,9 @@ import AlertModal from '../components/AlertModal';
 
 const { width } = Dimensions.get('window');
 
-export default function ServerSetupScreen() {
+export default function ServerSetupScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
-  const { connectServer, enableOfflineMode } = useContext(AuthContext);
+  const { connectServer, serverUrl } = useContext(AuthContext);
 
   const [ipAddress, setIpAddress] = useState('');
   const [isDiscovering, setIsDiscovering] = useState(false);
@@ -84,6 +84,9 @@ export default function ServerSetupScreen() {
       
       // Success!
       await connectServer(foundUrl);
+      if (navigation && navigation.canGoBack()) {
+        navigation.goBack();
+      }
       
     } catch (e) {
       console.log('Auto-discovery failed:', e);
@@ -130,6 +133,9 @@ export default function ServerSetupScreen() {
         const text = await res.text();
         if (text === 'pong' || text === '"pong"') { // Handle potential quotes
           await connectServer(url);
+          if (navigation && navigation.canGoBack()) {
+            navigation.goBack();
+          }
           return;
         }
       }
@@ -148,6 +154,14 @@ export default function ServerSetupScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.content}>
+        {serverUrl && navigation && navigation.canGoBack() && (
+          <TouchableOpacity 
+            style={{ position: 'absolute', top: 60, left: 24, zIndex: 10 }} 
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={28} color={theme.text} />
+          </TouchableOpacity>
+        )}
         <View style={styles.iconContainer}>
           <Ionicons name="server" size={64} color={theme.primary} />
         </View>
@@ -191,14 +205,6 @@ export default function ServerSetupScreen() {
             >
               <Ionicons name="search" size={18} color={theme.primary} style={{ marginRight: 8 }} />
               <Text style={[styles.outlineButtonText, { color: theme.primary }]}>Scan Network Again</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.offlineButton, { marginTop: 16 }]} 
-              onPress={enableOfflineMode}
-            >
-              <Ionicons name="cloud-offline" size={18} color={theme.textSecondary} style={{ marginRight: 8 }} />
-              <Text style={{ color: theme.textSecondary, fontWeight: '600' }}>Use Offline Mode</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -294,12 +300,6 @@ const styles = StyleSheet.create({
   },
   outlineButtonText: {
     fontSize: 16,
-    fontWeight: '600',
-  },
-  offlineButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
+    fontWeight: 'bold',
   }
 });

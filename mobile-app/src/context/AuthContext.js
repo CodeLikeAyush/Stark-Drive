@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useMemo } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import client from '../api/client';
+import { initDB } from '../db/Database';
 
 export const AuthContext = createContext({
   userToken: null,
@@ -39,6 +40,7 @@ export const AuthProvider = ({ children }) => {
       let url, token, name, email, vaultSetupStr;
       let backupEnabledStr, albumsStr;
       try {
+        await initDB();
         url = await SecureStore.getItemAsync('serverUrl');
         token = await SecureStore.getItemAsync('userToken');
         name = await SecureStore.getItemAsync('userName');
@@ -47,10 +49,6 @@ export const AuthProvider = ({ children }) => {
         
         backupEnabledStr = await SecureStore.getItemAsync('autoBackupEnabled');
         albumsStr = await SecureStore.getItemAsync('backupAlbums');
-        const offlineModeStr = await SecureStore.getItemAsync('isOfflineMode');
-        if (offlineModeStr === 'true') {
-          setIsOfflineMode(true);
-        }
       } catch (e) {
         console.warn("SecureStore error", e);
       }
@@ -156,20 +154,10 @@ export const AuthProvider = ({ children }) => {
     delete client.defaults.headers.common['Authorization'];
   };
 
-  const enableOfflineMode = async () => {
-    await SecureStore.setItemAsync('isOfflineMode', 'true');
-    setIsOfflineMode(true);
-  };
-
-  const disableOfflineMode = async () => {
-    await SecureStore.deleteItemAsync('isOfflineMode');
-    setIsOfflineMode(false);
-  };
-
   return (
     <AuthContext.Provider value={{ 
-      userToken, userEmail, userName, isLoading, autoBackupEnabled, backupAlbums, hasVaultSetup, serverUrl, isOfflineMode,
-      login, register, logout, updateUserName, enableOfflineMode, disableOfflineMode, 
+      userToken, userEmail, userName, isLoading, autoBackupEnabled, backupAlbums, hasVaultSetup, serverUrl,
+      login, register, logout, updateUserName, 
       setAutoBackupEnabled: updateAutoBackupEnabled, 
       setBackupAlbums: updateBackupAlbums,
       setHasVaultSetup,

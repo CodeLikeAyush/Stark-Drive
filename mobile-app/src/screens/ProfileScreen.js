@@ -5,9 +5,10 @@ import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import * as SecureStore from 'expo-secure-store';
 
 export default function ProfileScreen() {
-  const { logout, userEmail, userName, updateUserName, autoBackupEnabled, setAutoBackupEnabled, disconnectServer, isOfflineMode, disableOfflineMode } = useContext(AuthContext);
+  const { logout, userEmail, userName, updateUserName, autoBackupEnabled, setAutoBackupEnabled, disconnectServer } = useContext(AuthContext);
   const { theme, themeMode, setThemeMode } = useContext(ThemeContext);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showEditNameModal, setShowEditNameModal] = useState(false);
@@ -19,20 +20,26 @@ export default function ProfileScreen() {
 
   React.useEffect(() => {
     const fetchStorage = async () => {
-      if (isOfflineMode) {
-        setStorageUsed('offline');
-        return;
-      }
+      let hasCached = false;
       try {
+        const cached = await SecureStore.getItemAsync('cached_storage_used');
+        if (cached) {
+          setStorageUsed(parseInt(cached, 10));
+          hasCached = true;
+        }
         const client = require('../api/client').default;
-        const res = await client.get('/drive/storage');
+        const res = await client.get('/drive/storage', { timeout: 3000 });
         setStorageUsed(res.data);
+        await SecureStore.setItemAsync('cached_storage_used', res.data.toString());
       } catch (e) {
         console.log('Failed to fetch storage', e);
+        if (!hasCached) {
+          setStorageUsed('offline');
+        }
       }
     };
     fetchStorage();
-  }, [isOfflineMode]);
+  }, []);
 
   const formatBytes = (bytes) => {
     if (bytes === 0 || bytes === null) return '0 B';
@@ -115,28 +122,8 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </View>
 
+
       <View style={[styles.section, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-        {isOfflineMode ? (
-          <TouchableOpacity 
-            style={[styles.row, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]} 
-            onPress={async () => {
-              await disconnectServer();
-              await disableOfflineMode();
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="link-outline" size={22} color={theme.primary} style={{ marginRight: 12 }} />
-              <Text style={[styles.rowText, { color: theme.primary, fontWeight: 'bold' }]}>Connect Server</Text>
-            </View>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={[styles.row, { borderBottomColor: theme.border, borderBottomWidth: StyleSheet.hairlineWidth }]} onPress={disconnectServer}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="power-outline" size={22} color={theme.textSecondary} style={{ marginRight: 12 }} />
-              <Text style={[styles.rowText, { color: theme.textSecondary }]}>Disconnect Server</Text>
-            </View>
-          </TouchableOpacity>
-        )}
         <TouchableOpacity style={styles.row} onPress={() => setShowLogoutModal(true)}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Ionicons name="log-out-outline" size={22} color={theme.destructive} style={{ marginRight: 12 }} />

@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import client from '../api/client';
 import { AuthContext } from '../context/AuthContext';
 import { Alert } from 'react-native';
+import { getPhotos, upsertPhotoCache } from '../db/Database';
 
 export function useMediaBackup() {
   const { autoBackupEnabled, userToken, backupAlbums } = useContext(AuthContext);
@@ -68,115 +69,115 @@ export function useMediaBackup() {
   const loadTimeline = async () => {
     try {
       setLoading(true);
-      let remoteFiles = [];
-      try {
-        console.log("[MediaBackup] loadTimeline: Fetching remote photos...");
-        const remoteRes = await client.get('/drive/photos');
-        remoteFiles = remoteRes.data || [];
-        console.log(`[MediaBackup] Fetched ${remoteFiles.length} remote photos.`);
-      } catch (e) {
-        console.warn("[MediaBackup] Failed to fetch remote photos, falling back to offline registry", e);
-        try {
-          const regStr = await FileSystem.readAsStringAsync(`${FileSystem.documentDirectory}offline_photos_registry.json`);
-          const registry = JSON.parse(regStr);
-          remoteFiles = Object.entries(registry).map(([id, val]) => {
-            if (typeof val === 'object') return val;
-            return {
-              id: id,
-              originalFilename: val.split('/').pop(),
-              isLocal: false,
-              remoteFileId: id,
-            };
-          });
-        } catch(regErr) {}
-      }
-      const remoteFilenames = new Set(remoteFiles.map(f => f.originalFilename || f.filename));
-      
-      // 2. Fetch local photos (All photos for display)
-      const localAssets = await MediaLibrary.getAssetsAsync({
-        mediaType: 'photo',
-        first: 1000,
-        sortBy: [[MediaLibrary.SortBy.creationTime, false]],
-      });
 
-      // 3. Find the Camera album for fallback (if no folders are explicitly selected)
-      let cameraAlbumId = null;
-      if (!backupAlbums || backupAlbums.length === 0) {
-        const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
-        const cameraAlbum = albums.find(a => a.title.toLowerCase() === 'camera' || a.title.toLowerCase() === 'recents' || a.title.toLowerCase() === 'camera roll');
-        if (cameraAlbum) {
-          cameraAlbumId = cameraAlbum.id;
-        }
-      }
-
-      // 4. Merge and build timeline data
-      const mergedPhotos = [];
-      const toUploadQueue = [];
-
-      // Add local assets, marking their status
-      localAssets.assets.forEach(asset => {
-        const isSynced = remoteFilenames.has(asset.filename);
-        let remoteFileId = null;
-        if (isSynced) {
-            const remoteFile = remoteFiles.find(f => (f.originalFilename || f.filename) === asset.filename);
-            remoteFileId = remoteFile ? remoteFile.id : null;
-        }
-        
-        // Is it in the selected backup folders?
-        const isSelectedFolder = backupAlbums && backupAlbums.length > 0 
-          ? backupAlbums.includes(asset.albumId) 
-          : (cameraAlbumId ? asset.albumId === cameraAlbumId : false); // Fallback to camera
-        
-        let status = isSynced ? 'synced' : 'local';
-        
-        if (!isSynced && isSelectedFolder && autoBackupEnabled) {
-          status = 'queue';
-          toUploadQueue.push(asset);
-        }
-
-        mergedPhotos.push({
-          id: asset.id,
-          uri: asset.uri,
-          filename: asset.filename,
-          creationTime: asset.creationTime,
-          status,
-          asset, // keep reference to original asset
-          isLocal: true,
-          remoteFileId
+      const doMerge = async (remoteFiles) => {
+        const localAssets = await MediaLibrary.getAssetsAsync({
+          mediaType: 'photo',
+          first: 1000,
+          sortBy: [[MediaLibrary.SortBy.creationTime, false]],
         });
-      });
 
-      // Add remote assets that are NOT local (e.g. deleted from device or from another device)
-      const localFilenames = new Set(localAssets.assets.map(a => a.filename));
-      remoteFiles.forEach(file => {
-        const filename = file.originalFilename || file.filename;
-        if (!localFilenames.has(filename)) {
+        let cameraAlbumId = null;
+        if (!backupAlbums || backupAlbums.length === 0) {
+          const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+          const cameraAlbum = albums.find(a => a.title.toLowerCase() === 'camera' || a.title.toLowerCase() === 'recents' || a.title.toLowerCase() === 'camera roll');
+          if (cameraAlbum) cameraAlbumId = cameraAlbum.id;
+        }
+
+        const remoteFilenames = new Set(remoteFiles.map(f => f.originalFilename || f.filename));
+        const mergedPhotos = [];
+        const toUploadQueue = [];
+
+        localAssets.assets.forEach(asset => {
+          const isSynced = remoteFilenames.has(asset.filename);
+          let remoteFileId = null;
+          if (isSynced) {
+              const remoteFile = remoteFiles.find(f => (f.originalFilename || f.filename) === asset.filename);
+              remoteFileId = remoteFile ? remoteFile.id : null;
+          }
+          
+          const isSelectedFolder = backupAlbums && backupAlbums.length > 0 
+            ? backupAlbums.includes(asset.albumId) 
+            : (cameraAlbumId ? asset.albumId === cameraAlbumId : false);
+          
+          let status = isSynced ? 'synced' : 'local';
+          
+          if (!isSynced && isSelectedFolder && autoBackupEnabled) {
+            status = 'queue';
+            toUploadQueue.push(asset);
+          }
+
           mergedPhotos.push({
-            id: file.id ? file.id.toString() : (file.remoteFileId ? file.remoteFileId.toString() : ''),
-            uri: `${client.defaults.baseURL}/drive/download/${file.id || file.remoteFileId}`,
-            filename: filename,
-            creationTime: file.creationTime || new Date(file.createdAt || Date.now()).getTime(), // Use precise creationTime if available
-            status: 'synced',
-            isLocal: false,
-            remoteFileId: file.id || file.remoteFileId,
-            headers: { Authorization: `Bearer ${userToken}` } // Needed to display image from API
+            id: asset.id,
+            uri: asset.uri,
+            filename: asset.filename,
+            creationTime: asset.creationTime,
+            status,
+            asset,
+            isLocal: true,
+            remoteFileId
+          });
+        });
+
+        const localFilenames = new Set(localAssets.assets.map(a => a.filename));
+        remoteFiles.forEach(file => {
+          const filename = file.originalFilename || file.filename;
+          if (!localFilenames.has(filename)) {
+            mergedPhotos.push({
+              id: file.id ? file.id.toString() : (file.remoteFileId ? file.remoteFileId.toString() : ''),
+              uri: `${client.defaults.baseURL}/drive/download/${file.id || file.remoteFileId}`,
+              filename: filename,
+              creationTime: file.creationTime || new Date(file.createdAt || Date.now()).getTime(),
+              status: 'synced',
+              isLocal: false,
+              remoteFileId: file.id || file.remoteFileId,
+              headers: { Authorization: `Bearer ${userToken}` }
+            });
+          }
+        });
+
+        mergedPhotos.sort((a, b) => b.creationTime - a.creationTime);
+        setPhotos(mergedPhotos);
+        queueRef.current = toUploadQueue;
+        
+        if (!isUploadingRef.current && queueRef.current.length > 0) {
+          processQueue();
+        }
+      };
+
+      // 1. Instantly load from SQLite cache
+      try {
+        const rows = await getPhotos();
+        const cachedRemoteFiles = rows.map(row => ({
+          id: row.id,
+          originalFilename: row.filename,
+          filename: row.filename,
+          isLocal: false,
+          remoteFileId: row.remote_file_id || row.id,
+          creationTime: row.creation_time
+        }));
+        await doMerge(cachedRemoteFiles);
+        if (cachedRemoteFiles.length > 0 || localAssets.assets.length > 0) {
+           setLoading(false);
+        }
+      } catch (e) { console.warn(e); }
+
+      // 2. Fetch from Network
+      try {
+        const remoteRes = await client.get('/drive/photos', { timeout: 3000 });
+        const newRemoteFiles = remoteRes.data || [];
+        for (const f of newRemoteFiles) {
+          await upsertPhotoCache({
+            id: f.id,
+            uri: null,
+            filename: f.originalFilename,
+            creationTime: f.creationTime,
+            remoteFileId: f.id
           });
         }
-      });
-
-      // Sort merged photos by creation time descending
-      mergedPhotos.sort((a, b) => b.creationTime - a.creationTime);
-
-      console.log(`[MediaBackup] Merged photos: ${mergedPhotos.length}. Queue size: ${toUploadQueue.length}`);
-      setPhotos(mergedPhotos);
-      queueRef.current = toUploadQueue;
-      
-      // Start queue if needed
-      if (!isUploadingRef.current && queueRef.current.length > 0) {
-        console.log("[MediaBackup] Starting processQueue from loadTimeline");
-        processQueue();
-      } else if (isUploadingRef.current) {
-        console.log("[MediaBackup] processQueue already running");
+        await doMerge(newRemoteFiles);
+      } catch (e) {
+        console.warn("[MediaBackup] Failed to fetch remote photos from network", e);
       }
 
     } catch (e) {

@@ -6,6 +6,7 @@ import { ThemeContext } from '../theme/ThemeContext';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMediaBackup } from '../hooks/useMediaBackup';
 import { AuthContext } from '../context/AuthContext';
+import { getPhotos, upsertPhotoCache, markPhotoAvailableOffline, markPhotoNotAvailableOffline } from '../db/Database';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -30,36 +31,28 @@ export default function TimelineScreen({ navigation }) {
   const [offlinePhotos, setOfflinePhotos] = useState({});
   const [isDownloadingOffline, setIsDownloadingOffline] = useState(false);
   const OFFLINE_PHOTOS_DIR = `${FileSystem.documentDirectory}offline_photos/`;
-  const REGISTRY_FILE = `${FileSystem.documentDirectory}offline_photos_registry.json`;
+
+  const refreshOfflineState = async () => {
+    try {
+      const rows = await getPhotos();
+      const map = {};
+      rows.forEach(r => {
+        if (r.is_available_offline === 1 && r.local_path) {
+          map[r.id] = r.local_path;
+        }
+      });
+      setOfflinePhotos(map);
+    } catch (e) {
+      console.warn('Failed to refresh offline photos state', e);
+    }
+  };
 
   useEffect(() => {
-    initOffline();
+    refreshOfflineState();
+    FileSystem.getInfoAsync(OFFLINE_PHOTOS_DIR).then(dirInfo => {
+      if (!dirInfo.exists) FileSystem.makeDirectoryAsync(OFFLINE_PHOTOS_DIR, { intermediates: true });
+    });
   }, []);
-
-  const initOffline = async () => {
-    try {
-      const dirInfo = await FileSystem.getInfoAsync(OFFLINE_PHOTOS_DIR);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(OFFLINE_PHOTOS_DIR, { intermediates: true });
-      }
-      const regInfo = await FileSystem.getInfoAsync(REGISTRY_FILE);
-      if (regInfo.exists) {
-        const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
-        setOfflinePhotos(JSON.parse(contents));
-      }
-    } catch (e) {
-      console.warn('Failed to init offline photos registry', e);
-    }
-  };
-
-  const saveRegistry = async (newRegistry) => {
-    setOfflinePhotos(newRegistry);
-    try {
-      await FileSystem.writeAsStringAsync(REGISTRY_FILE, JSON.stringify(newRegistry));
-    } catch (e) {
-      console.warn('Failed to save offline photos registry', e);
-    }
-  };
   // Fast Scroller State
   const flashListRef = useRef(null);
   const containerHeight = useRef(0);
@@ -140,26 +133,29 @@ export default function TimelineScreen({ navigation }) {
         if (allOffline) {
           const stored = newReg[photo.id];
           const localPath = typeof stored === 'string' ? stored : stored?.localPath;
-          if (localPath) {
-             const info = await FileSystem.getInfoAsync(localPath);
-             if (info.exists) await FileSystem.deleteAsync(localPath, { idempotent: true });
-             delete newReg[photo.id];
-             hasChanges = true;
-          }
+           if (localPath) {
+              const info = await FileSystem.getInfoAsync(localPath);
+              if (info.exists) await FileSystem.deleteAsync(localPath, { idempotent: true });
+              await markPhotoNotAvailableOffline(photo.id);
+              delete newReg[photo.id];
+              hasChanges = true;
+           }
         } else {
           if (!newReg[photo.id]) {
             const ext = photo.filename ? (photo.filename.split('.').pop() || 'jpg') : 'jpg';
             const localPath = `${OFFLINE_PHOTOS_DIR}${photo.id}.${ext}`;
             const { status } = await FileSystem.downloadAsync(photo.uri, localPath, { headers: photo.headers });
-            if (status === 200) {
-              newReg[photo.id] = { ...photo, localPath };
-              hasChanges = true;
-            }
+             if (status === 200) {
+               await upsertPhotoCache(photo);
+               await markPhotoAvailableOffline(photo.id, localPath);
+               newReg[photo.id] = localPath;
+               hasChanges = true;
+             }
           }
         }
       }
       if (hasChanges) {
-        await saveRegistry(newReg);
+        setOfflinePhotos(newReg);
       }
       setSelectedPhotos(new Set());
     } catch (e) {

@@ -9,6 +9,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
+import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles } from '../db/Database';
 
 const gridSpacing = 16;
 
@@ -76,33 +77,23 @@ export default function DriveScreen({ navigation, route }) {
     });
   };
 
-  useEffect(() => {
-    const initOffline = async () => {
-      try {
-        const dirInfo = await FileSystem.getInfoAsync(OFFLINE_DIR);
-        if (!dirInfo.exists) {
-          await FileSystem.makeDirectoryAsync(OFFLINE_DIR, { intermediates: true });
-        }
-        const regInfo = await FileSystem.getInfoAsync(REGISTRY_FILE);
-        if (regInfo.exists) {
-          const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
-          setOfflineFiles(JSON.parse(contents));
-        }
-      } catch (e) {
-        console.warn('Failed to init offline registry', e);
-      }
-    };
-    initOffline();
-  }, []);
-
-  const saveRegistry = async (newRegistry) => {
-    setOfflineFiles(newRegistry);
+  const refreshOfflineState = async () => {
     try {
-      await FileSystem.writeAsStringAsync(REGISTRY_FILE, JSON.stringify(newRegistry));
+      const rows = await getOfflineFiles(0);
+      const map = {};
+      rows.forEach(r => map[r.id] = r.local_path);
+      setOfflineFiles(map);
     } catch (e) {
-      console.warn('Failed to save offline registry', e);
+      console.warn('Failed to refresh offline state', e);
     }
   };
+
+  useEffect(() => {
+    refreshOfflineState();
+    FileSystem.getInfoAsync(OFFLINE_DIR).then(dirInfo => {
+      if (!dirInfo.exists) FileSystem.makeDirectoryAsync(OFFLINE_DIR, { intermediates: true });
+    });
+  }, []);
 
   useEffect(() => {
     navigation.setOptions({
@@ -125,44 +116,42 @@ export default function DriveScreen({ navigation, route }) {
   const fetchDirectory = async () => {
     try {
       setLoading(true);
-      if (isOfflineMode) {
-        let registry = offlineFiles;
-        if (Object.keys(registry).length === 0) {
-           try {
-             const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
-             registry = JSON.parse(contents);
-           } catch(e) {}
-        }
-        const offlineItems = Object.entries(registry).map(([id, val]) => {
-          if (typeof val === 'object') return val;
-          return { id, originalFilename: val.split('/').pop(), localPath: val };
-        });
-        setData({ folders: [], files: offlineItems });
-        return;
+      
+      // 1. Instantly load from SQLite Cache
+      const cachedItems = await getFilesByParent(folderId, 0);
+      const folders = cachedItems.filter(i => !i.original_filename || i.original_filename === 'Unknown' || i.content_type === 'folder');
+      const files = cachedItems.filter(i => i.original_filename && i.original_filename !== 'Unknown' && i.content_type !== 'folder').map(r => ({
+        id: r.id, originalFilename: r.original_filename, contentType: r.content_type, sizeBytes: r.size_bytes, localPath: r.local_path, parentId: r.parent_id
+      }));
+      const mappedFolders = folders.map(r => ({ id: r.id, name: r.original_filename, subFolders: [] }));
+      
+      setData({ folders: mappedFolders, files });
+      if (mappedFolders.length > 0 || files.length > 0) {
+        setLoading(false);
       }
       
-      let endpoint;
-      if (searchQuery.trim().length > 0) {
-        endpoint = `/drive/search?q=${encodeURIComponent(searchQuery.trim())}`;
-      } else {
-        endpoint = folderId ? `/drive/list?folderId=${folderId}` : '/drive/list';
+      // 2. Fetch from Network
+      let endpoint = searchQuery.trim().length > 0 
+        ? `/drive/search?q=${encodeURIComponent(searchQuery.trim())}` 
+        : (folderId ? `/drive/list?folderId=${folderId}` : '/drive/list');
+        
+      const res = await client.get(endpoint, { timeout: 3000 });
+      const serverData = res.data;
+      
+      // 3. Upsert into SQLite
+      for (const f of serverData.folders) {
+         await upsertFileCache({ id: f.id, originalFilename: f.name, contentType: 'folder', parentId: folderId }, 0);
       }
-      const res = await client.get(endpoint);
-      setData(res.data);
+      for (const f of serverData.files) {
+         await upsertFileCache({ ...f, parentId: folderId }, 0);
+      }
+      
+      // 4. Update UI with fresh server data
+      setData(serverData);
+      refreshOfflineState();
+      
     } catch (e) {
-      console.warn("Failed to fetch directory", e);
-      let registry = offlineFiles;
-      if (Object.keys(registry).length === 0) {
-         try {
-           const contents = await FileSystem.readAsStringAsync(REGISTRY_FILE);
-           registry = JSON.parse(contents);
-         } catch(err) {}
-      }
-      const offlineItems = Object.entries(registry).map(([id, val]) => {
-        if (typeof val === 'object') return val;
-        return { id, originalFilename: val.split('/').pop(), localPath: val };
-      });
-      setData({ folders: [], files: offlineItems });
+      console.warn("Failed to fetch directory from network, using cache", e);
     } finally {
       setLoading(false);
     }
@@ -238,12 +227,12 @@ export default function DriveScreen({ navigation, route }) {
       
       let uriToShare = null;
 
-      // Check if it's available offline
-      if (offlineFiles[file.id]) {
-        const localPath = typeof offlineFiles[file.id] === 'string' ? offlineFiles[file.id] : offlineFiles[file.id].localPath;
-        const info = await FileSystem.getInfoAsync(localPath);
+      // Check SQLite for offline availability
+      const cached = await getFile(file.id);
+      if (cached && cached.is_available_offline === 1 && cached.local_path) {
+        const info = await FileSystem.getInfoAsync(cached.local_path);
         if (info.exists) {
-          uriToShare = localPath;
+          uriToShare = cached.local_path;
         }
       }
 
@@ -271,7 +260,7 @@ export default function DriveScreen({ navigation, route }) {
         }
       }
     } catch (e) {
-      showInfoAlert("Could not open file.");
+      showInfoAlert("You appear to be offline. Make this file available offline when connected.");
     } finally {
       setDownloadingId(null);
     }
@@ -362,13 +351,11 @@ export default function DriveScreen({ navigation, route }) {
 
     try {
       if (isOffline) {
-        const localPath = typeof offlineFiles[fileId] === 'string' ? offlineFiles[fileId] : offlineFiles[fileId].localPath;
+        const localPath = offlineFiles[fileId];
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) await FileSystem.deleteAsync(localPath);
         
-        const newReg = { ...offlineFiles };
-        delete newReg[fileId];
-        await saveRegistry(newReg);
+        await markFileNotAvailableOffline(fileId);
       } else {
         const downloadUrl = `${client.defaults.baseURL}/drive/download/${fileId}`;
         const localPath = `${OFFLINE_DIR}${fileId}_${selectedItem.originalFilename}`;
@@ -378,12 +365,13 @@ export default function DriveScreen({ navigation, route }) {
         });
 
         if (status === 200) {
-          const newReg = { ...offlineFiles, [fileId]: { ...selectedItem, localPath } };
-          await saveRegistry(newReg);
+          await upsertFileCache(selectedItem, 0);
+          await markFileAvailableOffline(fileId, localPath);
         } else {
           showInfoAlert("Failed to download file for offline use.");
         }
       }
+      await refreshOfflineState();
     } catch (e) {
       showInfoAlert("Error toggling offline mode.");
     } finally {
@@ -420,7 +408,7 @@ export default function DriveScreen({ navigation, route }) {
               {offlineTogglingId === item.id ? (
                 <ActivityIndicator size="small" color={theme.primary} style={{ transform: [{ scale: 0.6 }] }} />
               ) : (
-                <MaterialCommunityIcons name="cellphone-check" size={18} color={theme.primary} />
+                <MaterialCommunityIcons name="check-circle" size={18} color={theme.primary} />
               )}
             </View>
           )}
@@ -462,7 +450,7 @@ export default function DriveScreen({ navigation, route }) {
               {offlineTogglingId === item.id ? (
                 <ActivityIndicator size="small" color={theme.primary} style={{ marginLeft: 8, transform: [{ scale: 0.6 }] }} />
               ) : offlineFiles[item.id] ? (
-                <MaterialCommunityIcons name="cellphone-check" size={14} color={theme.primary} style={{ marginLeft: 8 }} />
+                <MaterialCommunityIcons name="check-circle" size={14} color={theme.primary} style={{ marginLeft: 8 }} />
               ) : null}
             </View>
           )}
@@ -560,11 +548,11 @@ export default function DriveScreen({ navigation, route }) {
             {(!('subFolders' in (selectedItem || {})) && selectedItem?.originalFilename) && (
               <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
                 <MaterialCommunityIcons 
-                  name={offlineFiles[selectedItem?.id] ? "cellphone-check" : "cellphone-arrow-down"} 
+                  name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
                   size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
                 />
                 <Text style={[styles.sheetButtonText, { color: theme.text }]}>
-                  {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Download to Device"}
+                  {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
                 </Text>
               </TouchableOpacity>
             )}

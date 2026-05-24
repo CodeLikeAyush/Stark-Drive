@@ -15,6 +15,7 @@ import VaultAuthScreen from '../screens/VaultAuthScreen';
 import VaultScreen from '../screens/VaultScreen';
 import BinScreen from '../screens/BinScreen';
 import ServerSetupScreen from '../screens/ServerSetupScreen';
+import OfflineBand from '../components/OfflineBand';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -24,7 +25,8 @@ function MainTabs() {
   const { theme } = useContext(ThemeContext);
 
   return (
-    <Tab.Navigator
+    <View style={{ flex: 1 }}>
+      <Tab.Navigator
       screenOptions={({ route }) => ({
         headerStyle: { backgroundColor: theme.surface, shadowColor: 'transparent', elevation: 0 },
         headerTintColor: theme.text,
@@ -73,6 +75,8 @@ function MainTabs() {
         options={{ title: 'Profile', headerShown: false }}
       />
     </Tab.Navigator>
+    <OfflineBand />
+    </View>
   );
 }
 
@@ -110,7 +114,7 @@ function VaultStack() {
 }
 
 export default function AppNavigator() {
-  const { userToken, isLoading, serverUrl, isOfflineMode } = useContext(AuthContext);
+  const { userToken, isLoading, serverUrl } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
 
   if (isLoading) {
@@ -124,12 +128,7 @@ export default function AppNavigator() {
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {isOfflineMode ? (
-          <>
-            <Stack.Screen name="Main" component={MainTabs} />
-            <Stack.Screen name="Bin" component={BinScreen} />
-          </>
-        ) : !serverUrl ? (
+        {!serverUrl ? (
           <Stack.Screen name="ServerSetup" component={ServerSetupScreen} />
         ) : userToken == null ? (
           <Stack.Screen name="Login" component={LoginScreen} />
@@ -137,6 +136,7 @@ export default function AppNavigator() {
           <>
             <Stack.Screen name="Main" component={MainTabs} />
             <Stack.Screen name="Bin" component={BinScreen} />
+            <Stack.Screen name="ServerSetup" component={ServerSetupScreen} />
           </>
         )}
       </Stack.Navigator>
