@@ -11,6 +11,7 @@ import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import ConfirmModal from '../components/ConfirmModal';
+import ZoomableImage from '../components/ZoomableImage';
 
 const { width } = Dimensions.get('window');
 const COLUMN_COUNT = width > 768 ? 5 : 3;
@@ -31,6 +32,17 @@ export default function TimelineScreen({ navigation }) {
   const [offlinePhotos, setOfflinePhotos] = useState({});
   const [isDownloadingOffline, setIsDownloadingOffline] = useState(false);
   const OFFLINE_PHOTOS_DIR = `${FileSystem.documentDirectory}offline_photos/`;
+
+  // Viewer and overlay states
+  const [showViewerOverlay, setShowViewerOverlay] = useState(true);
+  const overlayOpacity = useRef(new Animated.Value(1)).current;
+  const [isZoomed, setIsZoomed] = useState(false);
+  const [deleteFromViewer, setDeleteFromViewer] = useState(false);
+
+  const closeViewer = () => {
+    setSelectedPhotoIndex(null);
+    setIsZoomed(false);
+  };
 
   const refreshOfflineState = async () => {
     try {
@@ -91,15 +103,18 @@ export default function TimelineScreen({ navigation }) {
     setShowDeleteConfirm(false);
     const selectedArr = photos.filter(p => selectedPhotos.has(p.id));
     const success = await trashPhotos(selectedArr);
-    if (success) setSelectedPhotos(new Set());
+    if (success) {
+      setSelectedPhotos(new Set());
+      if (deleteFromViewer) {
+        setDeleteFromViewer(false);
+        setSelectedPhotoIndex(null);
+        setIsZoomed(false);
+      }
+    }
   };
 
-  const handleShareSelected = async () => {
-    if (selectedPhotos.size !== 1) return;
-    const photoId = Array.from(selectedPhotos)[0];
-    const photo = photos.find(p => p.id === photoId);
+  const sharePhoto = async (photo) => {
     if (!photo) return;
-
     try {
       if (photo.isLocal) {
         await Sharing.shareAsync(photo.uri);
@@ -115,6 +130,82 @@ export default function TimelineScreen({ navigation }) {
       }
     } catch (e) {
       console.warn("Failed to share", e);
+      Alert.alert("Error", "Failed to share photo.");
+    }
+  };
+
+  const handleShareSelected = async () => {
+    if (selectedPhotos.size !== 1) return;
+    const photoId = Array.from(selectedPhotos)[0];
+    const photo = photos.find(p => p.id === photoId);
+    if (!photo) return;
+    await sharePhoto(photo);
+  };
+
+  const toggleOfflinePhoto = async (photo) => {
+    if (!photo || photo.isLocal) return;
+    setIsDownloadingOffline(true);
+    let newReg = { ...offlinePhotos };
+    try {
+      if (offlinePhotos[photo.id]) {
+        // Remove offline copy
+        const stored = offlinePhotos[photo.id];
+        const localPath = typeof stored === 'string' ? stored : stored?.localPath;
+        if (localPath) {
+          const info = await FileSystem.getInfoAsync(localPath);
+          if (info.exists) await FileSystem.deleteAsync(localPath, { idempotent: true });
+          await markPhotoNotAvailableOffline(photo.id);
+          delete newReg[photo.id];
+          setOfflinePhotos(newReg);
+        }
+      } else {
+        // Download offline copy
+        const ext = photo.filename ? (photo.filename.split('.').pop() || 'jpg') : 'jpg';
+        const localPath = `${OFFLINE_PHOTOS_DIR}${photo.id}.${ext}`;
+        const { status } = await FileSystem.downloadAsync(photo.uri, localPath, { headers: photo.headers });
+        if (status === 200) {
+          await upsertPhotoCache(photo);
+          await markPhotoAvailableOffline(photo.id, localPath);
+          newReg[photo.id] = localPath;
+          setOfflinePhotos(newReg);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to toggle offline photo", e);
+      Alert.alert("Error", "Failed to change offline status.");
+    } finally {
+      setIsDownloadingOffline(false);
+    }
+  };
+
+  const handleDeletePhotoFromViewer = (photo) => {
+    setSelectedPhotos(new Set([photo.id]));
+    setDeleteFromViewer(true);
+    setShowDeleteConfirm(true);
+  };
+
+  const handleCancelDelete = () => {
+    setShowDeleteConfirm(false);
+    if (deleteFromViewer) {
+      setSelectedPhotos(new Set());
+      setDeleteFromViewer(false);
+    }
+  };
+
+  const toggleOverlays = () => {
+    if (showViewerOverlay) {
+      Animated.timing(overlayOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true
+      }).start(() => setShowViewerOverlay(false));
+    } else {
+      setShowViewerOverlay(true);
+      Animated.timing(overlayOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true
+      }).start();
     }
   };
 
@@ -313,7 +404,13 @@ export default function TimelineScreen({ navigation }) {
             toggleSelection(item.id);
           } else {
             const idx = photos.findIndex(p => p.id === item.id);
-            if (idx !== -1) setSelectedPhotoIndex(idx);
+            if (idx !== -1) {
+              setSelectedPhotoIndex(idx);
+              setShowViewerOverlay(true);
+              overlayOpacity.setValue(1);
+              setIsZoomed(false);
+              setDeleteFromViewer(false);
+            }
           }
         }}
         activeOpacity={0.7}
@@ -556,7 +653,7 @@ export default function TimelineScreen({ navigation }) {
         confirmText="Delete"
         confirmStyle="destructive"
         icon="trash"
-        onCancel={() => setShowDeleteConfirm(false)}
+        onCancel={handleCancelDelete}
         onConfirm={confirmDeletePhotos}
       />
 
@@ -627,21 +724,23 @@ export default function TimelineScreen({ navigation }) {
       )}
 
       {/* Full Screen Image Viewer Modal */}
-      <Modal visible={selectedPhotoIndex !== null} transparent animationType="fade">
+      <Modal visible={selectedPhotoIndex !== null} transparent animationType="fade" onRequestClose={closeViewer}>
         <View style={styles.viewerOverlay}>
-          <View style={styles.viewerHeader}>
-            <TouchableOpacity onPress={() => setSelectedPhotoIndex(null)} style={styles.viewerCloseBtn}>
-              <Ionicons name="close" size={28} color="#fff" />
-            </TouchableOpacity>
-            {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
-              <Text style={styles.viewerDateText}>
-                {new Date(photos[selectedPhotoIndex].creationTime).toLocaleDateString(undefined, { 
-                  weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                })}
-              </Text>
-            )}
-            <View style={{ width: 44 }} />
-          </View>
+          {showViewerOverlay && (
+            <Animated.View style={[styles.viewerHeader, { opacity: overlayOpacity }]}>
+              <TouchableOpacity onPress={closeViewer} style={styles.viewerCloseBtn}>
+                <Ionicons name="close" size={28} color="#fff" />
+              </TouchableOpacity>
+              {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
+                <Text style={styles.viewerDateText}>
+                  {new Date(photos[selectedPhotoIndex].creationTime).toLocaleDateString(undefined, { 
+                    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                  })}
+                </Text>
+              )}
+              <View style={{ width: 44 }} />
+            </Animated.View>
+          )}
           
           <FlatList
             data={photos}
@@ -653,21 +752,62 @@ export default function TimelineScreen({ navigation }) {
             onMomentumScrollEnd={(e) => {
               const newIndex = Math.round(e.nativeEvent.contentOffset.x / width);
               setSelectedPhotoIndex(newIndex);
+              setIsZoomed(false);
             }}
             keyExtractor={(item) => item.id}
+            scrollEnabled={!isZoomed}
             renderItem={({ item }) => (
-              <View style={{ width, height: '100%', justifyContent: 'center', alignItems: 'center' }}>
-                <Image 
-                  source={
-                    offlinePhotos[item.id] 
-                      ? { uri: offlinePhotos[item.id] } 
-                      : (item.headers ? { uri: item.uri, headers: item.headers } : { uri: item.uri })
-                  } 
-                  style={{ width: '100%', height: '100%', resizeMode: 'contain' }} 
-                />
-              </View>
+              <ZoomableImage
+                source={
+                  offlinePhotos[item.id] 
+                    ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath } 
+                    : (item.headers ? { uri: item.uri, headers: item.headers } : { uri: item.uri })
+                }
+                style={{ width: '100%', height: '100%' }}
+                onTap={toggleOverlays}
+                onZoomStateChange={setIsZoomed}
+              />
             )}
           />
+
+          {showViewerOverlay && selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
+            <Animated.View style={[styles.viewerFooterContainer, { opacity: overlayOpacity }]}>
+              <BlurView intensity={40} tint="dark" style={styles.viewerFooterBlur}>
+                <TouchableOpacity onPress={() => sharePhoto(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
+                  <Ionicons name="share-social-outline" size={24} color="#fff" />
+                  <Text style={styles.viewerFooterBtnText}>Share</Text>
+                </TouchableOpacity>
+
+                {!photos[selectedPhotoIndex].isLocal && (
+                  <TouchableOpacity 
+                    onPress={() => toggleOfflinePhoto(photos[selectedPhotoIndex])} 
+                    style={styles.viewerFooterBtn}
+                    disabled={isDownloadingOffline}
+                  >
+                    {isDownloadingOffline ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons 
+                          name={offlinePhotos[photos[selectedPhotoIndex].id] ? "cloud-done" : "cloud-download-outline"} 
+                          size={24} 
+                          color={offlinePhotos[photos[selectedPhotoIndex].id] ? "#4CAF50" : "#fff"} 
+                        />
+                        <Text style={[styles.viewerFooterBtnText, offlinePhotos[photos[selectedPhotoIndex].id] && { color: '#4CAF50' }]}>
+                          {offlinePhotos[photos[selectedPhotoIndex].id] ? "Offline" : "Download"}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity onPress={() => handleDeletePhotoFromViewer(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
+                  <Ionicons name="trash-outline" size={24} color="#FF3B30" />
+                  <Text style={[styles.viewerFooterBtnText, { color: '#FF3B30' }]}>Delete</Text>
+                </TouchableOpacity>
+              </BlurView>
+            </Animated.View>
+          )}
         </View>
       </Modal>
 
@@ -936,5 +1076,31 @@ const styles = StyleSheet.create({
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent',
     borderLeftColor: '#007AFF',
+  },
+  viewerFooterContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  viewerFooterBlur: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingBottom: 34,
+    paddingTop: 16,
+    paddingHorizontal: 20,
+  },
+  viewerFooterBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+    gap: 4,
+  },
+  viewerFooterBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
   }
 });
