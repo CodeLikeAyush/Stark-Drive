@@ -85,6 +85,82 @@ export default function TimelineScreen({ navigation }) {
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Settings bottom sheet swipe gesture
+  const settingsTranslateY = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (showSettingsModal) {
+      settingsTranslateY.setValue(0);
+    }
+  }, [showSettingsModal]);
+
+  const settingsPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        return gestureState.dy > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 2;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (gestureState.dy > 0) {
+          settingsTranslateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (gestureState.dy > 100) {
+          Animated.timing(settingsTranslateY, {
+            toValue: 600,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => {
+            setShowSettingsModal(false);
+          });
+        } else {
+          Animated.spring(settingsTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    })
+  ).current;
+
+  // Folders Selection bottom sheet swipe gesture
+  const foldersTranslateY = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (showFoldersModal) {
+      foldersTranslateY.setValue(0);
+    }
+  }, [showFoldersModal]);
+
+  const foldersPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        return gestureState.dy > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 2;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (gestureState.dy > 0) {
+          foldersTranslateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (gestureState.dy > 100) {
+          Animated.timing(foldersTranslateY, {
+            toValue: 800,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => {
+            setShowFoldersModal(false);
+          });
+        } else {
+          Animated.spring(foldersTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    })
+  ).current;
+
   const toggleSelection = (photoId) => {
     setSelectedPhotos(prev => {
       const next = new Set(prev);
@@ -491,121 +567,154 @@ export default function TimelineScreen({ navigation }) {
 
       {/* Settings Modal */}
       <Modal visible={showSettingsModal} transparent animationType="slide">
-        <View style={styles.fullScreenModalOverlay}>
-          <View style={[styles.fullScreenModalContent, { backgroundColor: theme.background, height: 'auto', paddingBottom: 40 }]}>
-            <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
-              <Text style={[styles.modalHeaderText, { color: theme.text }]}>Settings</Text>
-              <TouchableOpacity onPress={() => setShowSettingsModal(false)} style={{ padding: 8 }}>
-                <Ionicons name="close" size={24} color={theme.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Auto Backup Row */}
-            <View style={styles.settingsRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ backgroundColor: theme.primary + '20', padding: 8, borderRadius: 8, marginRight: 12 }}>
-                  <Ionicons name="cloud-upload-outline" size={20} color={theme.primary} />
-                </View>
-                <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Auto Backup</Text>
+        <TouchableOpacity 
+          style={styles.fullScreenModalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowSettingsModal(false)}
+        >
+          <Animated.View 
+            style={[
+              styles.fullScreenModalContent, 
+              { 
+                backgroundColor: theme.background, 
+                height: 'auto', 
+                paddingBottom: 40,
+                transform: [{ translateY: settingsTranslateY }]
+              }
+            ]}
+            {...settingsPanResponder.panHandlers}
+          >
+            <TouchableOpacity activeOpacity={1} style={{ width: '100%' }}>
+              <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
+                <Text style={[styles.modalHeaderText, { color: theme.text }]}>Settings</Text>
+                <TouchableOpacity onPress={() => setShowSettingsModal(false)} style={{ padding: 8 }}>
+                  <Ionicons name="close" size={24} color={theme.textSecondary} />
+                </TouchableOpacity>
               </View>
-              <Switch
-                value={autoBackupEnabled}
-                onValueChange={setAutoBackupEnabled}
-                trackColor={{ false: theme.border, true: theme.primary }}
-              />
-            </View>
 
-            {/* Folders Row */}
-            {autoBackupEnabled && (
-              <TouchableOpacity style={styles.settingsRow} onPress={handleOpenFolders}>
+              {/* Auto Backup Row */}
+              <View style={styles.settingsRow}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <View style={{ backgroundColor: theme.primary + '20', padding: 8, borderRadius: 8, marginRight: 12 }}>
-                    <Ionicons name="folder-outline" size={20} color={theme.primary} />
+                    <Ionicons name="cloud-upload-outline" size={20} color={theme.primary} />
+                  </View>
+                  <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Auto Backup</Text>
+                </View>
+                <Switch
+                  value={autoBackupEnabled}
+                  onValueChange={setAutoBackupEnabled}
+                  trackColor={{ false: theme.border, true: theme.primary }}
+                />
+              </View>
+
+              {/* Folders Row */}
+              {autoBackupEnabled && (
+                <TouchableOpacity style={styles.settingsRow} onPress={handleOpenFolders}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={{ backgroundColor: theme.primary + '20', padding: 8, borderRadius: 8, marginRight: 12 }}>
+                      <Ionicons name="folder-outline" size={20} color={theme.primary} />
+                    </View>
+                    <View>
+                      <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Backup Folders</Text>
+                      <Text style={{ color: theme.textSecondary, fontSize: 13, marginTop: 2 }}>
+                        {backupAlbums.length === 0
+                          ? "Default (Camera only)"
+                          : `${backupAlbums.length} folder${backupAlbums.length === 1 ? '' : 's'} selected`}
+                      </Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+                </TouchableOpacity>
+              )}
+
+              {/* Bin Row */}
+              <TouchableOpacity style={styles.settingsRow} onPress={() => { setShowSettingsModal(false); navigation.navigate('Bin'); }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ backgroundColor: theme.primary + '20', padding: 8, borderRadius: 8, marginRight: 12 }}>
+                    <Ionicons name="trash-outline" size={20} color={theme.primary} />
                   </View>
                   <View>
-                    <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Backup Folders</Text>
+                    <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Bin</Text>
                     <Text style={{ color: theme.textSecondary, fontSize: 13, marginTop: 2 }}>
-                      {backupAlbums.length === 0
-                        ? "Default (Camera only)"
-                        : `${backupAlbums.length} folder${backupAlbums.length === 1 ? '' : 's'} selected`}
+                      View recently deleted photos
                     </Text>
                   </View>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
               </TouchableOpacity>
-            )}
 
-            {/* Bin Row */}
-            <TouchableOpacity style={styles.settingsRow} onPress={() => { setShowSettingsModal(false); navigation.navigate('Bin'); }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ backgroundColor: theme.primary + '20', padding: 8, borderRadius: 8, marginRight: 12 }}>
-                  <Ionicons name="trash-outline" size={20} color={theme.primary} />
+              {/* Free Up Space Row */}
+              <TouchableOpacity style={styles.settingsRow} onPress={() => { setShowSettingsModal(false); handleFreeUpSpacePress(); }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ backgroundColor: theme.primary + '20', padding: 8, borderRadius: 8, marginRight: 12 }}>
+                    <Ionicons name="leaf-outline" size={20} color={theme.primary} />
+                  </View>
+                  <View>
+                    <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Free Up Space</Text>
+                    <Text style={{ color: theme.textSecondary, fontSize: 13, marginTop: 2 }}>Delete securely backed up photos</Text>
+                  </View>
                 </View>
-                <View>
-                  <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Bin</Text>
-                  <Text style={{ color: theme.textSecondary, fontSize: 13, marginTop: 2 }}>
-                    View recently deleted photos
-                  </Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+                <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+              </TouchableOpacity>
             </TouchableOpacity>
-
-            {/* Free Up Space Row */}
-            <TouchableOpacity style={styles.settingsRow} onPress={() => { setShowSettingsModal(false); handleFreeUpSpacePress(); }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ backgroundColor: theme.primary + '20', padding: 8, borderRadius: 8, marginRight: 12 }}>
-                  <Ionicons name="leaf-outline" size={20} color={theme.primary} />
-                </View>
-                <View>
-                  <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Free Up Space</Text>
-                  <Text style={{ color: theme.textSecondary, fontSize: 13, marginTop: 2 }}>Delete securely backed up photos</Text>
-                </View>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
-            </TouchableOpacity>
-
-          </View>
-        </View>
+          </Animated.View>
+        </TouchableOpacity>
       </Modal>
 
       {/* Folders Selection Modal */}
       <Modal visible={showFoldersModal} transparent animationType="slide">
-        <View style={styles.fullScreenModalOverlay}>
-          <View style={[styles.fullScreenModalContent, { backgroundColor: theme.background }]}>
-            <View style={[styles.modalHeader, { borderBottomColor: theme.border }]}>
-              <TouchableOpacity onPress={() => setShowFoldersModal(false)} style={{ padding: 8 }}>
-                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={[styles.modalHeaderText, { color: theme.text }]}>Select Folders</Text>
-              <TouchableOpacity onPress={saveFolders} style={{ padding: 8 }}>
-                <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 16 }}>Save</Text>
-              </TouchableOpacity>
-            </View>
-            <FlatList
-              data={availableAlbums}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={{ padding: 16 }}
-              renderItem={({ item }) => {
-                const isSelected = tempSelectedAlbums.includes(item.id);
-                return (
-                  <TouchableOpacity
-                    style={[styles.albumRow, { borderBottomColor: theme.border }]}
-                    onPress={() => toggleAlbum(item.id)}
-                  >
-                    <View style={styles.albumRowLeft}>
-                      <Ionicons name={isSelected ? "checkmark-circle" : "ellipse-outline"} size={24} color={isSelected ? theme.primary : theme.textSecondary} />
-                      <View style={{ marginLeft: 12 }}>
-                        <Text style={[styles.albumTitle, { color: theme.text }]}>{item.title}</Text>
-                        <Text style={[styles.albumCount, { color: theme.textSecondary }]}>{item.assetCount} photos</Text>
+        <TouchableOpacity 
+          style={styles.fullScreenModalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowFoldersModal(false)}
+        >
+          <Animated.View 
+            style={[
+              styles.fullScreenModalContent, 
+              { 
+                backgroundColor: theme.background,
+                transform: [{ translateY: foldersTranslateY }]
+              }
+            ]}
+          >
+            <TouchableOpacity activeOpacity={1} style={{ flex: 1 }}>
+              <View 
+                style={[styles.modalHeader, { borderBottomColor: theme.border }]}
+                {...foldersPanResponder.panHandlers}
+              >
+                <TouchableOpacity onPress={() => setShowFoldersModal(false)} style={{ padding: 8 }}>
+                  <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={[styles.modalHeaderText, { color: theme.text }]}>Select Folders</Text>
+                <TouchableOpacity onPress={saveFolders} style={{ padding: 8 }}>
+                  <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 16 }}>Save</Text>
+                </TouchableOpacity>
+              </View>
+              <FlatList
+                data={availableAlbums}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={{ padding: 16 }}
+                renderItem={({ item }) => {
+                  const isSelected = tempSelectedAlbums.includes(item.id);
+                  return (
+                    <TouchableOpacity
+                      style={[styles.albumRow, { borderBottomColor: theme.border }]}
+                      onPress={() => toggleAlbum(item.id)}
+                    >
+                      <View style={styles.albumRowLeft}>
+                        <Ionicons name={isSelected ? "checkmark-circle" : "ellipse-outline"} size={24} color={isSelected ? theme.primary : theme.textSecondary} />
+                        <View style={{ marginLeft: 12 }}>
+                          <Text style={[styles.albumTitle, { color: theme.text }]}>{item.title}</Text>
+                          <Text style={[styles.albumCount, { color: theme.textSecondary }]}>{item.assetCount} photos</Text>
+                        </View>
                       </View>
-                    </View>
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          </View>
-        </View>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </TouchableOpacity>
+          </Animated.View>
+        </TouchableOpacity>
       </Modal>
 
       <Modal visible={showCleanupModal} transparent animationType="fade">

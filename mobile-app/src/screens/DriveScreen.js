@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Dimensions, TextInput, Modal, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Dimensions, TextInput, Modal, KeyboardAvoidingView, Platform, ScrollView, PanResponder, Animated } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
 import client from '../api/client';
@@ -50,6 +50,82 @@ export default function DriveScreen({ navigation, route }) {
   const [renameText, setRenameText] = useState('');
   const [isMoveModalVisible, setIsMoveModalVisible] = useState(false);
   const [allFolders, setAllFolders] = useState([]);
+
+  // FAB bottom sheet swipe gesture
+  const fabTranslateY = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (isFabMenuVisible) {
+      fabTranslateY.setValue(0);
+    }
+  }, [isFabMenuVisible]);
+
+  const fabPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        return gestureState.dy > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 2;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (gestureState.dy > 0) {
+          fabTranslateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (gestureState.dy > 100) {
+          Animated.timing(fabTranslateY, {
+            toValue: 400,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => {
+            setIsFabMenuVisible(false);
+          });
+        } else {
+          Animated.spring(fabTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    })
+  ).current;
+
+  // Action bottom sheet swipe gesture
+  const actionTranslateY = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (isActionMenuVisible) {
+      actionTranslateY.setValue(0);
+    }
+  }, [isActionMenuVisible]);
+
+  const actionPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        return gestureState.dy > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 2;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (gestureState.dy > 0) {
+          actionTranslateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (gestureState.dy > 100) {
+          Animated.timing(actionTranslateY, {
+            toValue: 400,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => {
+            setIsActionMenuVisible(false);
+          });
+        } else {
+          Animated.spring(actionTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    })
+  ).current;
 
   const { theme, isDark } = useContext(ThemeContext);
   const { userToken, isOfflineMode } = useContext(AuthContext);
@@ -514,65 +590,89 @@ export default function DriveScreen({ navigation, route }) {
       {/* FAB Custom Menu (Bottom Sheet Horizontal) */}
       <Modal visible={isFabMenuVisible} transparent animationType="slide">
         <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsFabMenuVisible(false)}>
-          <View style={[styles.bottomSheet, { backgroundColor: theme.surface }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={[styles.sheetTitle, { color: theme.text }]}>Create New</Text>
+          <Animated.View 
+            style={[
+              styles.bottomSheet, 
+              { 
+                backgroundColor: theme.surface,
+                transform: [{ translateY: fabTranslateY }]
+              }
+            ]}
+            {...fabPanResponder.panHandlers}
+          >
+            <TouchableOpacity activeOpacity={1} style={{ width: '100%', alignItems: 'center' }}>
+              <View style={styles.sheetHandle} />
+              <Text style={[styles.sheetTitle, { color: theme.text }]}>Create New</Text>
 
-            <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%', paddingVertical: 16 }}>
-              <TouchableOpacity style={styles.horizontalSheetButton} onPress={() => { setIsFabMenuVisible(false); setTimeout(() => setIsFolderModalVisible(true), 300); }}>
-                <View style={[styles.iconCircle, { backgroundColor: theme.background }]}>
-                  <MaterialCommunityIcons name="folder-plus" size={32} color={theme.primary} />
-                </View>
-                <Text style={[styles.sheetButtonText, { color: theme.text, marginTop: 8 }]}>Folder</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%', paddingVertical: 16 }}>
+                <TouchableOpacity style={styles.horizontalSheetButton} onPress={() => { setIsFabMenuVisible(false); setTimeout(() => setIsFolderModalVisible(true), 300); }}>
+                  <View style={[styles.iconCircle, { backgroundColor: theme.background }]}>
+                    <MaterialCommunityIcons name="folder-plus" size={32} color={theme.primary} />
+                  </View>
+                  <Text style={[styles.sheetButtonText, { color: theme.text, marginTop: 8 }]}>Folder</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity style={styles.horizontalSheetButton} onPress={() => { setIsFabMenuVisible(false); setTimeout(() => pickAndUploadDocument(), 300); }}>
-                <View style={[styles.iconCircle, { backgroundColor: theme.background }]}>
-                  <MaterialCommunityIcons name="file-upload" size={32} color={theme.primary} />
-                </View>
-                <Text style={[styles.sheetButtonText, { color: theme.text, marginTop: 8 }]}>File</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+                <TouchableOpacity style={styles.horizontalSheetButton} onPress={() => { setIsFabMenuVisible(false); setTimeout(() => pickAndUploadDocument(), 300); }}>
+                  <View style={[styles.iconCircle, { backgroundColor: theme.background }]}>
+                    <MaterialCommunityIcons name="file-upload" size={32} color={theme.primary} />
+                  </View>
+                  <Text style={[styles.sheetButtonText, { color: theme.text, marginTop: 8 }]}>File</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </Animated.View>
         </TouchableOpacity>
       </Modal>
 
       {/* Item Action Menu (Bottom Sheet) */}
       <Modal visible={isActionMenuVisible} transparent animationType="slide">
         <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsActionMenuVisible(false)}>
-          <View style={[styles.bottomSheet, { backgroundColor: theme.surface }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={[styles.sheetTitle, { color: theme.text }]} numberOfLines={1}>
-              {selectedItem?.name || selectedItem?.originalFilename}
-            </Text>
-
-            {(!('subFolders' in (selectedItem || {})) && selectedItem?.originalFilename) && (
-              <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
-                <MaterialCommunityIcons 
-                  name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
-                  size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
-                />
-                <Text style={[styles.sheetButtonText, { color: theme.text }]}>
-                  {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
+          <Animated.View 
+            style={[
+              styles.bottomSheet, 
+              { 
+                backgroundColor: theme.surface,
+                transform: [{ translateY: actionTranslateY }]
+              }
+            ]}
+            {...actionPanResponder.panHandlers}
+          >
+            <TouchableOpacity activeOpacity={1} style={{ width: '100%' }}>
+              <View style={{ width: '100%', alignItems: 'center' }}>
+                <View style={styles.sheetHandle} />
+                <Text style={[styles.sheetTitle, { color: theme.text }]} numberOfLines={1}>
+                  {selectedItem?.name || selectedItem?.originalFilename}
                 </Text>
+              </View>
+
+              {(!('subFolders' in (selectedItem || {})) && selectedItem?.originalFilename) && (
+                <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
+                  <MaterialCommunityIcons 
+                    name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
+                    size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
+                  />
+                  <Text style={[styles.sheetButtonText, { color: theme.text }]}>
+                    {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openRenameModal}>
+                <MaterialCommunityIcons name="pencil" size={24} color={theme.text} style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: theme.text }]}>Rename</Text>
               </TouchableOpacity>
-            )}
 
-            <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openRenameModal}>
-              <MaterialCommunityIcons name="pencil" size={24} color={theme.text} style={styles.sheetIcon} />
-              <Text style={[styles.sheetButtonText, { color: theme.text }]}>Rename</Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openMoveModal}>
+                <MaterialCommunityIcons name="folder-move" size={24} color={theme.text} style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: theme.text }]}>Move</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openMoveModal}>
-              <MaterialCommunityIcons name="folder-move" size={24} color={theme.text} style={styles.sheetIcon} />
-              <Text style={[styles.sheetButtonText, { color: theme.text }]}>Move</Text>
+              <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0 }]} onPress={() => { setIsActionMenuVisible(false); handleDelete(); }}>
+                <MaterialCommunityIcons name="delete" size={24} color="#ff3b30" style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: '#ff3b30', fontWeight: '500' }]}>Delete</Text>
+              </TouchableOpacity>
             </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0 }]} onPress={() => { setIsActionMenuVisible(false); handleDelete(); }}>
-              <MaterialCommunityIcons name="delete" size={24} color="#ff3b30" style={styles.sheetIcon} />
-              <Text style={[styles.sheetButtonText, { color: '#ff3b30', fontWeight: '500' }]}>Delete</Text>
-            </TouchableOpacity>
-          </View>
+          </Animated.View>
         </TouchableOpacity>
       </Modal>
 

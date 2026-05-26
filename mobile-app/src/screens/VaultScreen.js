@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform, Dimensions, PanResponder, Animated } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
@@ -42,6 +42,44 @@ export default function VaultScreen({ route, navigation }) {
   const [isActionMenuVisible, setIsActionMenuVisible] = useState(false);
   const [isRenameModalVisible, setIsRenameModalVisible] = useState(false);
   const [renameText, setRenameText] = useState('');
+
+  // Action bottom sheet swipe gesture
+  const actionTranslateY = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (isActionMenuVisible) {
+      actionTranslateY.setValue(0);
+    }
+  }, [isActionMenuVisible]);
+
+  const actionPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (evt, gestureState) => {
+        return gestureState.dy > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 2;
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        if (gestureState.dy > 0) {
+          actionTranslateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        if (gestureState.dy > 100) {
+          Animated.timing(actionTranslateY, {
+            toValue: 400,
+            duration: 200,
+            useNativeDriver: true,
+          }).start(() => {
+            setIsActionMenuVisible(false);
+          });
+        } else {
+          Animated.spring(actionTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+    })
+  ).current;
 
   // Lock the vault if the user switches to a different tab/screen
   useFocusEffect(
@@ -455,32 +493,45 @@ export default function VaultScreen({ route, navigation }) {
       {/* Action Menu Bottom Sheet */}
       <Modal visible={isActionMenuVisible} transparent animationType="slide">
         <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsActionMenuVisible(false)}>
-          <View style={[styles.bottomSheet, { backgroundColor: theme.surface }]}>
-            <View style={styles.sheetHandle} />
-            <Text style={[styles.sheetTitle, { color: theme.text }]} numberOfLines={1}>
-              {selectedItem?.originalFilename}
-            </Text>
+          <Animated.View 
+            style={[
+              styles.bottomSheet, 
+              { 
+                backgroundColor: theme.surface,
+                transform: [{ translateY: actionTranslateY }]
+              }
+            ]}
+            {...actionPanResponder.panHandlers}
+          >
+            <TouchableOpacity activeOpacity={1} style={{ width: '100%' }}>
+              <View style={{ width: '100%', alignItems: 'center' }}>
+                <View style={styles.sheetHandle} />
+                <Text style={[styles.sheetTitle, { color: theme.text }]} numberOfLines={1}>
+                  {selectedItem?.originalFilename}
+                </Text>
+              </View>
 
-            <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
-              <MaterialCommunityIcons 
-                name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
-                size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
-              />
-              <Text style={[styles.sheetButtonText, { color: theme.text }]}>
-                {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
-              </Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
+                <MaterialCommunityIcons 
+                  name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
+                  size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
+                />
+                <Text style={[styles.sheetButtonText, { color: theme.text }]}>
+                  {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openRenameModal}>
-              <MaterialCommunityIcons name="pencil" size={24} color={theme.text} style={styles.sheetIcon} />
-              <Text style={[styles.sheetButtonText, { color: theme.text }]}>Rename</Text>
-            </TouchableOpacity>
+              <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openRenameModal}>
+                <MaterialCommunityIcons name="pencil" size={24} color={theme.text} style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: theme.text }]}>Rename</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0 }]} onPress={promptDelete}>
-              <MaterialCommunityIcons name="delete" size={24} color="#ff3b30" style={styles.sheetIcon} />
-              <Text style={[styles.sheetButtonText, { color: '#ff3b30', fontWeight: '500' }]}>Delete</Text>
+              <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0 }]} onPress={promptDelete}>
+                <MaterialCommunityIcons name="delete" size={24} color="#ff3b30" style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: '#ff3b30', fontWeight: '500' }]}>Delete</Text>
+              </TouchableOpacity>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </TouchableOpacity>
       </Modal>
 
