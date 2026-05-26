@@ -52,8 +52,8 @@ export default function VaultAuthScreen({ navigation }) {
           hasPrompted.current = true;
           promptBiometrics(storedPin);
         } else if (hasPrompted.current) {
-           // We already prompted (maybe they cancelled), just show PIN pad
-           setLoading(false);
+          // We already prompted (maybe they cancelled), just show PIN pad
+          setLoading(false);
         }
       } catch (e) {
         console.warn("SecureStore error", e);
@@ -101,15 +101,21 @@ export default function VaultAuthScreen({ navigation }) {
     }
     // If biometrics fail, are cancelled, or unavailable, just stop loading and let them type the PIN
     setLoading(false);
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.blur();
+        inputRef.current.focus();
+      }
+    }, 300);
   };
 
   const handlePinSubmit = async () => {
     setError('');
-    
+
     if (isSettingUp) {
       if (step === 'ENTER') {
         if (pin.length < 4) {
-          setError('PIN must be at least 4 digits');
+          setError('PIN must be at least 6 digits');
           return;
         }
         setStep('CONFIRM');
@@ -124,15 +130,15 @@ export default function VaultAuthScreen({ navigation }) {
         try {
           const pinKey = getSafePinKey();
           await SecureStore.setItemAsync(pinKey, pin);
-          
+
           // Inform server
           try {
             await client.put('/auth/vault-setup');
             setHasVaultSetup(true);
-          } catch(e) {
+          } catch (e) {
             console.warn("Failed to notify server of vault setup", e);
           }
-          
+
           navigation.replace('VaultScreen', { vaultPin: pin });
         } catch (e) {
           setError('Failed to save PIN');
@@ -142,13 +148,13 @@ export default function VaultAuthScreen({ navigation }) {
     } else {
       // Entering PIN (either existing device or new device restore)
       if (pin.length < 4) {
-        setError('PIN must be at least 4 digits');
+        setError('PIN must be at least 6 digits');
         return;
       }
       try {
         const pinKey = getSafePinKey();
         const storedPin = await SecureStore.getItemAsync(pinKey);
-        
+
         if (storedPin) {
           if (pin === storedPin) {
             navigation.replace('VaultScreen', { vaultPin: pin });
@@ -175,13 +181,22 @@ export default function VaultAuthScreen({ navigation }) {
     );
   }
 
+  const handlePinBoxPress = () => {
+    if (inputRef.current) {
+      inputRef.current.blur();
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
+    }
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <MaterialCommunityIcons name="safe" size={80} color={theme.primary} style={{ marginBottom: 20 }} />
       <Text style={[styles.title, { color: theme.text }]}>Secure Vault</Text>
       <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-        {isSettingUp 
-          ? (step === 'ENTER' ? "Create a Master PIN to encrypt your files." : "Confirm your Master PIN.") 
+        {isSettingUp
+          ? (step === 'ENTER' ? "Create a Master PIN to encrypt your files." : "Confirm your Master PIN.")
           : (hasVaultSetup && !loading) ? "Enter your existing Vault PIN to restore access." : "Enter your PIN to unlock the vault."}
       </Text>
 
@@ -190,12 +205,12 @@ export default function VaultAuthScreen({ navigation }) {
           const value = (step === 'ENTER' || !isSettingUp) ? pin : confirmPin;
           const isFocused = value.length === index;
           return (
-            <TouchableOpacity 
-              key={index} 
-              activeOpacity={1} 
-              onPress={() => inputRef.current?.focus()}
+            <TouchableOpacity
+              key={index}
+              activeOpacity={1}
+              onPress={handlePinBoxPress}
               style={[
-                styles.pinBox, 
+                styles.pinBox,
                 { backgroundColor: theme.surface, borderColor: isFocused ? theme.primary : theme.border }
               ]}
             >
@@ -212,8 +227,8 @@ export default function VaultAuthScreen({ navigation }) {
         style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }}
         value={(step === 'ENTER' || !isSettingUp) ? pin : confirmPin}
         onChangeText={(text) => {
-           if (step === 'ENTER' || !isSettingUp) setPin(text);
-           else setConfirmPin(text);
+          if (step === 'ENTER' || !isSettingUp) setPin(text);
+          else setConfirmPin(text);
         }}
         keyboardType="numeric"
         maxLength={6}
@@ -230,8 +245,8 @@ export default function VaultAuthScreen({ navigation }) {
         </TouchableOpacity>
 
         {!isSettingUp && (
-          <TouchableOpacity 
-            style={{ marginTop: 24, padding: 10, alignItems: 'center' }} 
+          <TouchableOpacity
+            style={{ marginTop: 24, padding: 10, alignItems: 'center' }}
             onPress={async () => {
               const pinKey = getSafePinKey();
               const storedPin = await SecureStore.getItemAsync(pinKey);
@@ -243,7 +258,7 @@ export default function VaultAuthScreen({ navigation }) {
           </TouchableOpacity>
         )}
       </View>
-      
+
       {isSettingUp && step === 'CONFIRM' && (
         <TouchableOpacity style={{ marginTop: 20 }} onPress={() => { setStep('ENTER'); setConfirmPin(''); setPin(''); }}>
           <Text style={{ color: theme.textSecondary }}>Start Over</Text>
