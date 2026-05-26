@@ -85,7 +85,7 @@ export default function VaultScreen({ route, navigation }) {
   useFocusEffect(
     useCallback(() => {
       fetchVaultFiles();
-      
+
       return () => {
         // This runs when the screen loses navigation focus
         navigation.replace('VaultAuth');
@@ -132,7 +132,7 @@ export default function VaultScreen({ route, navigation }) {
   const fetchVaultFiles = async () => {
     try {
       setLoading(true);
-      
+
       // 1. Instantly load from SQLite Cache
       const cachedItems = await getFilesByParent(null, 1);
       const offlineItems = cachedItems.map(r => ({
@@ -142,20 +142,20 @@ export default function VaultScreen({ route, navigation }) {
       if (offlineItems.length > 0) {
         setLoading(false);
       }
-      
+
       // 2. Fetch from Network
       const res = await client.get('/drive/vault/list', { timeout: 3000 });
       const serverData = res.data || [];
-      
+
       // 3. Upsert into SQLite
       for (const f of serverData) {
-         await upsertFileCache(f, 1);
+        await upsertFileCache(f, 1);
       }
-      
+
       // 4. Update UI with fresh server data
       setFiles(serverData);
       refreshOfflineState();
-      
+
     } catch (e) {
       console.warn("Failed to fetch vault files from network, using cache", e);
     } finally {
@@ -168,7 +168,7 @@ export default function VaultScreen({ route, navigation }) {
       isSystemUiActive.current = true;
       const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
       isSystemUiActive.current = false;
-      
+
       if (result.canceled) return;
 
       const file = result.assets[0];
@@ -238,21 +238,21 @@ export default function VaultScreen({ route, navigation }) {
 
       if (!encryptedUriToDecrypt) {
         const downloadUrl = `${client.defaults.baseURL}/drive/download/${file.id}`;
-        
+
         const { uri, status } = await FileSystem.downloadAsync(downloadUrl, tempLocalEncUri, {
           headers: { Authorization: `Bearer ${userToken}` }
         });
 
         if (status !== 200) {
-           setAlertData({
-              visible: true,
-              title: "Error",
-              message: "You appear to be offline. Make this file available offline when connected.",
-              confirmText: "OK",
-              onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
-           });
-           setDownloadingId(null);
-           return;
+          setAlertData({
+            visible: true,
+            title: "Error",
+            message: "You appear to be offline. Make this file available offline when connected.",
+            confirmText: "OK",
+            onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+          });
+          setDownloadingId(null);
+          return;
         }
         encryptedUriToDecrypt = uri;
       }
@@ -261,7 +261,7 @@ export default function VaultScreen({ route, navigation }) {
       // We need to extract the extension to help Sharing open it correctly
       const extMatch = file.originalFilename.match(/\.[^.]+$/);
       const ext = extMatch ? extMatch[0] : '';
-      
+
       const decryptedUri = await decryptFileAsync(encryptedUriToDecrypt, vaultPin, ext);
 
       // 3. Open
@@ -285,7 +285,7 @@ export default function VaultScreen({ route, navigation }) {
       }
       // Note: We might want to keep the decrypted file around temporarily, but for maximum security we delete it after sharing?
       // Unfortunately expo-sharing is asynchronous and might need the file. We'll leave it in cache, it gets cleared by OS eventually.
-      
+
     } catch (e) {
       console.error(e);
       setAlertData({
@@ -318,12 +318,12 @@ export default function VaultScreen({ route, navigation }) {
         const localPath = offlineFiles[fileId];
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) await FileSystem.deleteAsync(localPath);
-        
+
         await markFileNotAvailableOffline(fileId);
       } else {
         const downloadUrl = `${client.defaults.baseURL}/drive/download/${fileId}`;
         const localPath = `${OFFLINE_VAULT_DIR}${fileId}_enc`;
-        
+
         const { status } = await FileSystem.downloadAsync(downloadUrl, localPath, {
           headers: { Authorization: `Bearer ${userToken}` }
         });
@@ -408,7 +408,7 @@ export default function VaultScreen({ route, navigation }) {
 
 
   const renderItem = ({ item }) => (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={[styles.fileItem, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}
       onPress={() => handleFilePress(item)}
       onLongPress={() => handleLongPress(item)}
@@ -440,27 +440,27 @@ export default function VaultScreen({ route, navigation }) {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
       <View style={styles.tabletWrapper}>
-      {loading ? (
-        <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
-      ) : (
-        <FlashList
-          data={files}
-          keyExtractor={item => item.id.toString()}
-          renderItem={renderItem}
-          estimatedItemSize={70}
-          contentContainerStyle={{ padding: 16 }}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialCommunityIcons name="safe" size={80} color={theme.border} />
-              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Your Vault is empty.</Text>
-            </View>
-          }
-        />
-      )}
+        {loading ? (
+          <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
+        ) : (
+          <FlashList
+            data={files}
+            keyExtractor={item => item.id.toString()}
+            renderItem={renderItem}
+            estimatedItemSize={70}
+            contentContainerStyle={{ padding: 16 }}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <MaterialCommunityIcons name="safe" size={80} color={theme.border} />
+                <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Your Vault is empty.</Text>
+              </View>
+            }
+          />
+        )}
       </View>
 
       {/* FAB */}
-      <TouchableOpacity 
+      <TouchableOpacity
         style={[styles.fab, { backgroundColor: theme.primary }]}
         onPress={handleUpload}
         disabled={isUploading}
@@ -493,10 +493,10 @@ export default function VaultScreen({ route, navigation }) {
       {/* Action Menu Bottom Sheet */}
       <Modal visible={isActionMenuVisible} transparent animationType="slide">
         <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsActionMenuVisible(false)}>
-          <Animated.View 
+          <Animated.View
             style={[
-              styles.bottomSheet, 
-              { 
+              styles.bottomSheet,
+              {
                 backgroundColor: theme.surface,
                 transform: [{ translateY: actionTranslateY }]
               }
@@ -512,9 +512,9 @@ export default function VaultScreen({ route, navigation }) {
               </View>
 
               <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
-                <MaterialCommunityIcons 
-                  name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
-                  size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
+                <MaterialCommunityIcons
+                  name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"}
+                  size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon}
                 />
                 <Text style={[styles.sheetButtonText, { color: theme.text }]}>
                   {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
@@ -548,15 +548,15 @@ export default function VaultScreen({ route, navigation }) {
               autoFocus
             />
             <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+              <TouchableOpacity
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]}
                 onPress={() => setIsRenameModalVisible(false)}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.buttonText, { color: theme.text }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.button, { backgroundColor: theme.primary }]} 
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: theme.primary }]}
                 onPress={confirmRename}
                 disabled={!renameText?.trim()}
                 activeOpacity={0.7}

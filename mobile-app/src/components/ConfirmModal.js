@@ -6,12 +6,12 @@ import { BlurView } from 'expo-blur';
 
 const { width } = Dimensions.get('window');
 
-export default function ConfirmModal({ 
-  visible, 
-  title, 
-  message, 
-  onCancel, 
-  onConfirm, 
+export default function ConfirmModal({
+  visible,
+  title,
+  message,
+  onCancel,
+  onConfirm,
   confirmText = "Confirm",
   confirmStyle = "primary", // 'primary' or 'destructive'
   icon
@@ -30,11 +30,11 @@ export default function ConfirmModal({
               <Ionicons name={icon} size={32} color={confirmColor} />
             </View>
           )}
-          
+
           <Text style={[styles.title, { color: theme.text, marginTop: icon ? 16 : 0 }]}>
             {title}
           </Text>
-          
+
           {message && (
             <Text style={[styles.message, { color: theme.textSecondary }]}>
               {message}
@@ -43,8 +43,8 @@ export default function ConfirmModal({
 
           <View style={styles.buttonRow}>
             {onCancel && (
-              <TouchableOpacity 
-                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+              <TouchableOpacity
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]}
                 onPress={onCancel}
                 activeOpacity={0.7}
               >
@@ -52,8 +52,8 @@ export default function ConfirmModal({
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity 
-              style={[styles.button, { backgroundColor: confirmColor }]} 
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: confirmColor }]}
               onPress={onConfirm}
               activeOpacity={0.7}
             >

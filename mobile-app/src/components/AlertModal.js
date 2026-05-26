@@ -6,11 +6,11 @@ import { BlurView } from 'expo-blur';
 
 const { width } = Dimensions.get('window');
 
-export default function AlertModal({ 
-  visible, 
-  title, 
-  message, 
-  onClose, 
+export default function AlertModal({
+  visible,
+  title,
+  message,
+  onClose,
   buttonText = "OK",
   icon = "information-circle"
 }) {
@@ -24,19 +24,19 @@ export default function AlertModal({
           <View style={[styles.iconContainer, { backgroundColor: theme.primary + '20' }]}>
             <Ionicons name={icon} size={32} color={theme.primary} />
           </View>
-          
+
           <Text style={[styles.title, { color: theme.text }]}>
             {title}
           </Text>
-          
+
           {message && (
             <Text style={[styles.message, { color: theme.textSecondary }]}>
               {message}
             </Text>
           )}
 
-          <TouchableOpacity 
-            style={[styles.button, { backgroundColor: theme.primary }]} 
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: theme.primary }]}
             onPress={onClose}
             activeOpacity={0.7}
           >

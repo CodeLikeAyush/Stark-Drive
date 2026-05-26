@@ -193,7 +193,7 @@ export default function DriveScreen({ navigation, route }) {
   const fetchDirectory = async () => {
     try {
       setLoading(true);
-      
+
       // 1. Instantly load from SQLite Cache
       const cachedItems = await getFilesByParent(folderId, 0);
       const folders = cachedItems.filter(i => !i.original_filename || i.original_filename === 'Unknown' || i.content_type === 'folder');
@@ -201,32 +201,32 @@ export default function DriveScreen({ navigation, route }) {
         id: r.id, originalFilename: r.original_filename, contentType: r.content_type, sizeBytes: r.size_bytes, localPath: r.local_path, parentId: r.parent_id
       }));
       const mappedFolders = folders.map(r => ({ id: r.id, name: r.original_filename, subFolders: [] }));
-      
+
       setData({ folders: mappedFolders, files });
       if (mappedFolders.length > 0 || files.length > 0) {
         setLoading(false);
       }
-      
+
       // 2. Fetch from Network
-      let endpoint = searchQuery.trim().length > 0 
-        ? `/drive/search?q=${encodeURIComponent(searchQuery.trim())}` 
+      let endpoint = searchQuery.trim().length > 0
+        ? `/drive/search?q=${encodeURIComponent(searchQuery.trim())}`
         : (folderId ? `/drive/list?folderId=${folderId}` : '/drive/list');
-        
+
       const res = await client.get(endpoint, { timeout: 3000 });
       const serverData = res.data;
-      
+
       // 3. Upsert into SQLite
       for (const f of serverData.folders) {
-         await upsertFileCache({ id: f.id, originalFilename: f.name, contentType: 'folder', parentId: folderId }, 0);
+        await upsertFileCache({ id: f.id, originalFilename: f.name, contentType: 'folder', parentId: folderId }, 0);
       }
       for (const f of serverData.files) {
-         await upsertFileCache({ ...f, parentId: folderId }, 0);
+        await upsertFileCache({ ...f, parentId: folderId }, 0);
       }
-      
+
       // 4. Update UI with fresh server data
       setData(serverData);
       refreshOfflineState();
-      
+
     } catch (e) {
       console.warn("Failed to fetch directory from network, using cache", e);
     } finally {
@@ -301,7 +301,7 @@ export default function DriveScreen({ navigation, route }) {
   const handleFilePress = async (file) => {
     try {
       setDownloadingId(file.id);
-      
+
       let uriToShare = null;
 
       // Check SQLite for offline availability
@@ -317,7 +317,7 @@ export default function DriveScreen({ navigation, route }) {
       if (!uriToShare) {
         const downloadUrl = `${client.defaults.baseURL}/drive/download/${file.id}`;
         const tempLocalUri = `${FileSystem.documentDirectory}temp_${file.originalFilename}`;
-        
+
         const { uri, status } = await FileSystem.downloadAsync(downloadUrl, tempLocalUri, {
           headers: { Authorization: `Bearer ${userToken}` }
         });
@@ -431,12 +431,12 @@ export default function DriveScreen({ navigation, route }) {
         const localPath = offlineFiles[fileId];
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) await FileSystem.deleteAsync(localPath);
-        
+
         await markFileNotAvailableOffline(fileId);
       } else {
         const downloadUrl = `${client.defaults.baseURL}/drive/download/${fileId}`;
         const localPath = `${OFFLINE_DIR}${fileId}_${selectedItem.originalFilename}`;
-        
+
         const { status } = await FileSystem.downloadAsync(downloadUrl, localPath, {
           headers: { Authorization: `Bearer ${userToken}` }
         });
@@ -590,10 +590,10 @@ export default function DriveScreen({ navigation, route }) {
       {/* FAB Custom Menu (Bottom Sheet Horizontal) */}
       <Modal visible={isFabMenuVisible} transparent animationType="slide">
         <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsFabMenuVisible(false)}>
-          <Animated.View 
+          <Animated.View
             style={[
-              styles.bottomSheet, 
-              { 
+              styles.bottomSheet,
+              {
                 backgroundColor: theme.surface,
                 transform: [{ translateY: fabTranslateY }]
               }
@@ -627,10 +627,10 @@ export default function DriveScreen({ navigation, route }) {
       {/* Item Action Menu (Bottom Sheet) */}
       <Modal visible={isActionMenuVisible} transparent animationType="slide">
         <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsActionMenuVisible(false)}>
-          <Animated.View 
+          <Animated.View
             style={[
-              styles.bottomSheet, 
-              { 
+              styles.bottomSheet,
+              {
                 backgroundColor: theme.surface,
                 transform: [{ translateY: actionTranslateY }]
               }
@@ -647,9 +647,9 @@ export default function DriveScreen({ navigation, route }) {
 
               {(!('subFolders' in (selectedItem || {})) && selectedItem?.originalFilename) && (
                 <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
-                  <MaterialCommunityIcons 
-                    name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"} 
-                    size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon} 
+                  <MaterialCommunityIcons
+                    name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"}
+                    size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon}
                   />
                   <Text style={[styles.sheetButtonText, { color: theme.text }]}>
                     {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
@@ -689,15 +689,15 @@ export default function DriveScreen({ navigation, route }) {
               autoFocus
             />
             <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+              <TouchableOpacity
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]}
                 onPress={() => setIsRenameModalVisible(false)}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.buttonText, { color: theme.text }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.button, { backgroundColor: theme.primary, opacity: renameText.trim() ? 1 : 0.5 }]} 
+              <TouchableOpacity
+                style={[styles.button, { backgroundColor: theme.primary, opacity: renameText.trim() ? 1 : 0.5 }]}
                 onPress={confirmRename}
                 disabled={!renameText.trim()}
                 activeOpacity={0.7}
@@ -724,8 +724,8 @@ export default function DriveScreen({ navigation, route }) {
               autoFocus
             />
             <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+              <TouchableOpacity
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]}
                 onPress={() => setIsFolderModalVisible(false)}
                 activeOpacity={0.7}
               >
@@ -794,7 +794,7 @@ export default function DriveScreen({ navigation, route }) {
           if (alertData.onConfirm) alertData.onConfirm();
         }}
         onCancel={
-          alertData.onConfirm 
+          alertData.onConfirm
             ? () => setAlertData(prev => ({ ...prev, visible: false }))
             : null
         }
