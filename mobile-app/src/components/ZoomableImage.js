@@ -52,10 +52,13 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
     }
   };
 
-  // Reset scale and translation when source changes (user swipes)
+  // Reset scale and translation when source URI changes (user swipes to next image)
+  // We compare source.uri instead of the source object reference because the parent
+  // recreates the source object on every render.
+  const sourceUri = source?.uri;
   useEffect(() => {
     reset(false);
-  }, [source]);
+  }, [sourceUri]);
 
   const handleDoubleTap = () => {
     if (scaleVal.current > 1.1) {
@@ -100,14 +103,14 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (evt, gestureState) => {
-        // Claim responder on move if pinching or already zoomed in
-        const isPinch = evt.nativeEvent.touches.length >= 2;
+        // Claim responder on move if pinching (numberActiveTouches >= 2) or already zoomed in
+        const isPinch = gestureState.numberActiveTouches >= 2;
         const isPanning = scaleVal.current > 1.1;
         return isPinch || isPanning;
       },
       onPanResponderGrant: (evt, gestureState) => {
         const touches = evt.nativeEvent.touches;
-        if (touches.length >= 2) {
+        if (touches && touches.length >= 2) {
           initialDistance.current = getDistance(touches);
           initialScale.current = scaleVal.current;
         } else {
@@ -120,7 +123,7 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
       },
       onPanResponderMove: (evt, gestureState) => {
         const touches = evt.nativeEvent.touches;
-        if (touches.length >= 2) {
+        if (gestureState.numberActiveTouches >= 2 && touches && touches.length >= 2) {
           if (initialDistance.current) {
             const currentDist = getDistance(touches);
             if (currentDist > 0) {
@@ -130,7 +133,7 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
               updateZoomState(newScale > 1.1);
             }
           }
-        } else if (touches.length === 1 && scaleVal.current > 1.1) {
+        } else if (gestureState.numberActiveTouches === 1 && scaleVal.current > 1.1) {
           const currentScale = scaleVal.current;
           const maxTx = (screenWidth * (currentScale - 1)) / 2;
           const maxTy = (screenHeight * (currentScale - 1)) / 2;
