@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Image, PanResponder, Animated, Dimensions, StyleSheet } from 'react-native';
+import { View, Image, PanResponder, Animated, Dimensions, StyleSheet, Pressable } from 'react-native';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -69,6 +69,26 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
     }
   };
 
+  const handlePress = () => {
+    const now = Date.now();
+    if (now - lastTap.current < 300) {
+      // Double Tap detected
+      if (singleTapTimeout.current) {
+        clearTimeout(singleTapTimeout.current);
+        singleTapTimeout.current = null;
+      }
+      handleDoubleTap();
+      lastTap.current = 0; // Prevent rapid-tap loops
+    } else {
+      // Schedule Single Tap
+      lastTap.current = now;
+      singleTapTimeout.current = setTimeout(() => {
+        if (onTap) onTap();
+        singleTapTimeout.current = null;
+      }, 250);
+    }
+  };
+
   const getDistance = (touches) => {
     if (touches.length < 2) return 0;
     const dx = touches[0].pageX - touches[1].pageX;
@@ -78,12 +98,12 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (evt, gestureState) => {
-        // Intercept touches if pinching, zoomed in (panning), or active movement is detected
+        // Claim responder on move if pinching or already zoomed in
         const isPinch = evt.nativeEvent.touches.length >= 2;
         const isPanning = scaleVal.current > 1.1;
-        return isPinch || isPanning || Math.abs(gestureState.dx) > 2 || Math.abs(gestureState.dy) > 2;
+        return isPinch || isPanning;
       },
       onPanResponderGrant: (evt, gestureState) => {
         const touches = evt.nativeEvent.touches;
@@ -105,15 +125,13 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
             const currentDist = getDistance(touches);
             if (currentDist > 0) {
               let newScale = initialScale.current * (currentDist / initialDistance.current);
-              newScale = Math.max(0.8, Math.min(newScale, 4)); // scale limit bounds
+              newScale = Math.max(1, Math.min(newScale, 4));
               scale.setValue(newScale);
               updateZoomState(newScale > 1.1);
             }
           }
         } else if (touches.length === 1 && scaleVal.current > 1.1) {
           const currentScale = scaleVal.current;
-          
-          // Constrain movement based on image bounds
           const maxTx = (screenWidth * (currentScale - 1)) / 2;
           const maxTy = (screenHeight * (currentScale - 1)) / 2;
           
@@ -131,52 +149,28 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
       },
       onPanResponderRelease: (evt, gestureState) => {
         translate.flattenOffset();
-        
-        // Single or double tap detection
-        const isTapGesture = Math.abs(gestureState.dx) < 5 && Math.abs(gestureState.dy) < 5;
-        
-        if (isTapGesture) {
-          const now = Date.now();
-          if (now - lastTap.current < 300) {
-            // Cancel single tap timeout on double tap
-            if (singleTapTimeout.current) {
-              clearTimeout(singleTapTimeout.current);
-              singleTapTimeout.current = null;
-            }
-            handleDoubleTap();
-          } else {
-            // Schedule single tap execution
-            singleTapTimeout.current = setTimeout(() => {
-              if (onTap) onTap();
-              singleTapTimeout.current = null;
-            }, 250);
-          }
-          lastTap.current = now;
+        if (scaleVal.current < 1.1) {
+          reset(true);
         } else {
-          // Adjust translation if scale is outside boundaries
-          if (scaleVal.current < 1.1) {
-            reset(true);
-          } else {
-            const currentScale = scaleVal.current;
-            const maxTx = (screenWidth * (currentScale - 1)) / 2;
-            const maxTy = (screenHeight * (currentScale - 1)) / 2;
-            
-            let targetX = translateVal.current.x;
-            let targetY = translateVal.current.y;
-            
-            let needAdjust = false;
-            if (targetX < -maxTx) { targetX = -maxTx; needAdjust = true; }
-            if (targetX > maxTx) { targetX = maxTx; needAdjust = true; }
-            if (targetY < -maxTy) { targetY = -maxTy; needAdjust = true; }
-            if (targetY > maxTy) { targetY = maxTy; needAdjust = true; }
-            
-            if (needAdjust) {
-              Animated.timing(translate, {
-                toValue: { x: targetX, y: targetY },
-                duration: 150,
-                useNativeDriver: true
-              }).start();
-            }
+          const currentScale = scaleVal.current;
+          const maxTx = (screenWidth * (currentScale - 1)) / 2;
+          const maxTy = (screenHeight * (currentScale - 1)) / 2;
+          
+          let targetX = translateVal.current.x;
+          let targetY = translateVal.current.y;
+          
+          let needAdjust = false;
+          if (targetX < -maxTx) { targetX = -maxTx; needAdjust = true; }
+          if (targetX > maxTx) { targetX = maxTx; needAdjust = true; }
+          if (targetY < -maxTy) { targetY = -maxTy; needAdjust = true; }
+          if (targetY > maxTy) { targetY = maxTy; needAdjust = true; }
+          
+          if (needAdjust) {
+            Animated.timing(translate, {
+              toValue: { x: targetX, y: targetY },
+              duration: 150,
+              useNativeDriver: true
+            }).start();
           }
         }
       },
@@ -190,22 +184,24 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
   ).current;
 
   return (
-    <View style={styles.container} {...panResponder.panHandlers}>
-      <Animated.Image
-        source={source}
-        style={[
-          style,
-          {
-            transform: [
-              { scale: scale },
-              { translateX: translate.x },
-              { translateY: translate.y }
-            ]
-          }
-        ]}
-        resizeMode="contain"
-      />
-    </View>
+    <Pressable style={styles.container} onPress={handlePress}>
+      <View style={styles.container} {...panResponder.panHandlers}>
+        <Animated.Image
+          source={source}
+          style={[
+            style,
+            {
+              transform: [
+                { scale: scale },
+                { translateX: translate.x },
+                { translateY: translate.y }
+              ]
+            }
+          ]}
+          resizeMode="contain"
+        />
+      </View>
+    </Pressable>
   );
 }
 

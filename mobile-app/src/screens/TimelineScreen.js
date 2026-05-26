@@ -37,11 +37,13 @@ export default function TimelineScreen({ navigation }) {
   const [showViewerOverlay, setShowViewerOverlay] = useState(true);
   const overlayOpacity = useRef(new Animated.Value(1)).current;
   const [isZoomed, setIsZoomed] = useState(false);
+  const isCurrentPhotoZoomed = useRef(false);
   const [deleteFromViewer, setDeleteFromViewer] = useState(false);
 
   const closeViewer = () => {
     setSelectedPhotoIndex(null);
     setIsZoomed(false);
+    isCurrentPhotoZoomed.current = false;
   };
 
   const refreshOfflineState = async () => {
@@ -409,6 +411,7 @@ export default function TimelineScreen({ navigation }) {
               setShowViewerOverlay(true);
               overlayOpacity.setValue(1);
               setIsZoomed(false);
+              isCurrentPhotoZoomed.current = false;
               setDeleteFromViewer(false);
             }
           }
@@ -726,21 +729,22 @@ export default function TimelineScreen({ navigation }) {
       {/* Full Screen Image Viewer Modal */}
       <Modal visible={selectedPhotoIndex !== null} transparent animationType="fade" onRequestClose={closeViewer}>
         <View style={styles.viewerOverlay}>
-          {showViewerOverlay && (
-            <Animated.View style={[styles.viewerHeader, { opacity: overlayOpacity }]}>
-              <TouchableOpacity onPress={closeViewer} style={styles.viewerCloseBtn}>
-                <Ionicons name="close" size={28} color="#fff" />
-              </TouchableOpacity>
-              {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
-                <Text style={styles.viewerDateText}>
-                  {new Date(photos[selectedPhotoIndex].creationTime).toLocaleDateString(undefined, { 
-                    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                  })}
-                </Text>
-              )}
-              <View style={{ width: 44 }} />
-            </Animated.View>
-          )}
+          <Animated.View 
+            style={[styles.viewerHeader, { opacity: overlayOpacity }]}
+            pointerEvents={showViewerOverlay ? "auto" : "none"}
+          >
+            <TouchableOpacity onPress={closeViewer} style={styles.viewerCloseBtn}>
+              <Ionicons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
+            {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
+              <Text style={styles.viewerDateText}>
+                {new Date(photos[selectedPhotoIndex].creationTime).toLocaleDateString(undefined, { 
+                  weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                })}
+              </Text>
+            )}
+            <View style={{ width: 44 }} />
+          </Animated.View>
           
           <FlatList
             data={photos}
@@ -753,9 +757,18 @@ export default function TimelineScreen({ navigation }) {
               const newIndex = Math.round(e.nativeEvent.contentOffset.x / width);
               setSelectedPhotoIndex(newIndex);
               setIsZoomed(false);
+              isCurrentPhotoZoomed.current = false;
             }}
             keyExtractor={(item) => item.id}
             scrollEnabled={!isZoomed}
+            onTouchStart={(evt) => {
+              if (evt.nativeEvent.touches.length >= 2) {
+                setIsZoomed(true);
+              }
+            }}
+            onTouchEnd={() => {
+              setIsZoomed(isCurrentPhotoZoomed.current);
+            }}
             renderItem={({ item }) => (
               <ZoomableImage
                 source={
@@ -765,13 +778,19 @@ export default function TimelineScreen({ navigation }) {
                 }
                 style={{ width: '100%', height: '100%' }}
                 onTap={toggleOverlays}
-                onZoomStateChange={setIsZoomed}
+                onZoomStateChange={(zoomed) => {
+                  isCurrentPhotoZoomed.current = zoomed;
+                  setIsZoomed(zoomed);
+                }}
               />
             )}
           />
 
-          {showViewerOverlay && selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
-            <Animated.View style={[styles.viewerFooterContainer, { opacity: overlayOpacity }]}>
+          {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
+            <Animated.View 
+              style={[styles.viewerFooterContainer, { opacity: overlayOpacity }]}
+              pointerEvents={showViewerOverlay ? "auto" : "none"}
+            >
               <BlurView intensity={40} tint="dark" style={styles.viewerFooterBlur}>
                 <TouchableOpacity onPress={() => sharePhoto(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
                   <Ionicons name="share-social-outline" size={24} color="#fff" />
