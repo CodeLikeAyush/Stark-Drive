@@ -2,6 +2,7 @@ import React, { useContext } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions } from 'react-native';
 import { ThemeContext } from '../theme/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 
 const { width } = Dimensions.get('window');
 
@@ -13,12 +14,13 @@ export default function AlertModal({
   buttonText = "OK",
   icon = "information-circle"
 }) {
-  const { theme } = useContext(ThemeContext);
+  const { theme, isDark } = useContext(ThemeContext);
 
   return (
     <Modal visible={visible} transparent animationType="fade">
+      <BlurView intensity={30} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
       <View style={styles.overlay}>
-        <View style={[styles.dialogContainer, { backgroundColor: theme.surface }]}>
+        <View style={[styles.dialogContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <View style={[styles.iconContainer, { backgroundColor: theme.primary + '20' }]}>
             <Ionicons name={icon} size={32} color={theme.primary} />
           </View>
@@ -49,15 +51,16 @@ export default function AlertModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   dialogContainer: {
-    width: width - 48,
+    width: Math.min(width - 48, 340),
     borderRadius: 20,
     padding: 24,
+    borderWidth: 1,
     alignItems: 'center',
     elevation: 10,
     shadowColor: '#000',
@@ -88,7 +91,7 @@ const styles = StyleSheet.create({
   button: {
     width: '100%',
     height: 48,
-    borderRadius: 12,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },

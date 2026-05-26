@@ -10,15 +10,16 @@ import * as Sharing from 'expo-sharing';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles } from '../db/Database';
+import ConfirmModal from '../components/ConfirmModal';
 
 const gridSpacing = 16;
+const { width } = Dimensions.get('window');
 
 export default function DriveScreen({ navigation, route }) {
   const { folderId, folderName } = route.params || {};
   const [data, setData] = useState({ folders: [], files: [] });
   const [loading, setLoading] = useState(true);
 
-  const { width } = Dimensions.get('window');
   const numColumns = width > 768 ? 5 : 3;
   const gridItemWidth = (width - gridSpacing * (numColumns + 1)) / numColumns;
   const [isGridView, setIsGridView] = useState(true);
@@ -50,7 +51,7 @@ export default function DriveScreen({ navigation, route }) {
   const [isMoveModalVisible, setIsMoveModalVisible] = useState(false);
   const [allFolders, setAllFolders] = useState([]);
 
-  const { theme } = useContext(ThemeContext);
+  const { theme, isDark } = useContext(ThemeContext);
   const { userToken, isOfflineMode } = useContext(AuthContext);
 
   const getFileIcon = (contentType) => {
@@ -577,9 +578,9 @@ export default function DriveScreen({ navigation, route }) {
 
       {/* Rename Modal */}
       <Modal visible={isRenameModalVisible} transparent animationType="fade">
-        <BlurView intensity={30} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <BlurView intensity={30} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.dialogContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Text style={[styles.modalTitle, { color: theme.text }]}>Rename</Text>
             <TextInput
               style={[styles.modalInput, { color: theme.text, borderColor: theme.border }]}
@@ -587,12 +588,21 @@ export default function DriveScreen({ navigation, route }) {
               onChangeText={setRenameText}
               autoFocus
             />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalButton} onPress={() => setIsRenameModalVisible(false)}>
-                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+                onPress={() => setIsRenameModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.buttonText, { color: theme.text }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalButton} onPress={confirmRename} disabled={!renameText.trim()}>
-                <Text style={{ color: theme.primary, fontSize: 16, fontWeight: 'bold' }}>Save</Text>
+              <TouchableOpacity 
+                style={[styles.button, { backgroundColor: theme.primary, opacity: renameText.trim() ? 1 : 0.5 }]} 
+                onPress={confirmRename}
+                disabled={!renameText.trim()}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.buttonText, { color: '#fff' }]}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -601,9 +611,9 @@ export default function DriveScreen({ navigation, route }) {
 
       {/* Folder Creation Modal */}
       <Modal visible={isFolderModalVisible} transparent animationType="fade">
-        <BlurView intensity={30} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <BlurView intensity={30} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.dialogContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Text style={[styles.modalTitle, { color: theme.text }]}>New Folder</Text>
             <TextInput
               style={[styles.modalInput, { color: theme.text, borderColor: theme.border }]}
@@ -613,19 +623,24 @@ export default function DriveScreen({ navigation, route }) {
               onChangeText={setNewFolderName}
               autoFocus
             />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalButton} onPress={() => setIsFolderModalVisible(false)}>
-                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+                onPress={() => setIsFolderModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.buttonText, { color: theme.text }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, { opacity: newFolderName.trim() ? 1 : 0.5 }]}
+                style={[styles.button, { backgroundColor: theme.primary, opacity: newFolderName.trim() ? 1 : 0.5 }]}
                 onPress={createFolder}
                 disabled={!newFolderName.trim() || creatingFolder}
+                activeOpacity={0.7}
               >
                 {creatingFolder ? (
-                  <ActivityIndicator size="small" color={theme.primary} />
+                  <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                  <Text style={{ color: theme.primary, fontSize: 16, fontWeight: 'bold' }}>Create</Text>
+                  <Text style={[styles.buttonText, { color: '#fff' }]}>Create</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -668,39 +683,22 @@ export default function DriveScreen({ navigation, route }) {
       </Modal>
 
       {/* Custom Unified Alert Modal */}
-      <Modal visible={alertData.visible} transparent animationType="fade">
-        <BlurView intensity={30} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border, alignItems: 'center', maxWidth: 300 }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>{alertData.title}</Text>
-            <Text style={{ color: theme.textSecondary, fontSize: 16, textAlign: 'center', marginBottom: 24 }}>{alertData.message}</Text>
-
-            <View style={{ flexDirection: 'row', width: '100%', justifyContent: 'space-between', marginTop: 8 }}>
-              {alertData.onConfirm && (
-                <TouchableOpacity
-                  style={[styles.alertButton, { backgroundColor: theme.background, borderWidth: 1, borderColor: theme.border }]}
-                  onPress={() => setAlertData({ ...alertData, visible: false })}
-                >
-                  <Text style={{ color: theme.text, fontSize: 16, fontWeight: '500' }}>Cancel</Text>
-                </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[
-                  styles.alertButton,
-                  { backgroundColor: alertData.confirmStyle === 'destructive' ? '#ff3b30' : theme.primary },
-                  !alertData.onConfirm && { width: '100%' } // Full width if it's just an OK button
-                ]}
-                onPress={() => {
-                  setAlertData({ ...alertData, visible: false });
-                  if (alertData.onConfirm) alertData.onConfirm();
-                }}
-              >
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>{alertData.confirmText}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <ConfirmModal
+        visible={alertData.visible}
+        title={alertData.title}
+        message={alertData.message}
+        confirmText={alertData.confirmText || "OK"}
+        confirmStyle={alertData.confirmStyle}
+        onConfirm={() => {
+          setAlertData(prev => ({ ...prev, visible: false }));
+          if (alertData.onConfirm) alertData.onConfirm();
+        }}
+        onCancel={
+          alertData.onConfirm 
+            ? () => setAlertData(prev => ({ ...prev, visible: false }))
+            : null
+        }
+      />
 
     </View>
   );
@@ -795,44 +793,52 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
   },
-  modalContent: {
-    width: '100%',
-    maxWidth: 340,
-    borderRadius: 16,
+  dialogContainer: {
+    width: Math.min(width - 48, 340),
+    borderRadius: 20,
     padding: 24,
     borderWidth: 1,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowOffset: { width: 0, height: 10 },
-    shadowRadius: 20,
     elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 16,
     textAlign: 'center',
+    marginBottom: 16,
   },
   modalInput: {
+    width: '100%',
     height: 48,
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 12,
     paddingHorizontal: 12,
     fontSize: 16,
     marginBottom: 24,
   },
-  modalActions: {
+  buttonRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
+    width: '100%',
   },
-  modalButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    marginLeft: 8,
-    minWidth: 80,
+  button: {
+    flex: 1,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
     alignItems: 'center',
+  },
+  cancelButton: {
+    marginRight: 12,
+  },
+  buttonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   sheetOverlay: {
     flex: 1,

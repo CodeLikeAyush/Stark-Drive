@@ -2,6 +2,7 @@ import React, { useContext } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions } from 'react-native';
 import { ThemeContext } from '../theme/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 
 const { width } = Dimensions.get('window');
 
@@ -15,14 +16,15 @@ export default function ConfirmModal({
   confirmStyle = "primary", // 'primary' or 'destructive'
   icon
 }) {
-  const { theme } = useContext(ThemeContext);
+  const { theme, isDark } = useContext(ThemeContext);
 
   const confirmColor = confirmStyle === 'destructive' ? '#FF3B30' : theme.primary;
 
   return (
     <Modal visible={visible} transparent animationType="fade">
+      <BlurView intensity={30} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
       <View style={styles.overlay}>
-        <View style={[styles.dialogContainer, { backgroundColor: theme.surface }]}>
+        <View style={[styles.dialogContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           {icon && (
             <View style={[styles.iconContainer, { backgroundColor: confirmColor + '20' }]}>
               <Ionicons name={icon} size={32} color={confirmColor} />
@@ -40,13 +42,15 @@ export default function ConfirmModal({
           )}
 
           <View style={styles.buttonRow}>
-            <TouchableOpacity 
-              style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
-              onPress={onCancel}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.buttonText, { color: theme.text }]}>Cancel</Text>
-            </TouchableOpacity>
+            {onCancel && (
+              <TouchableOpacity 
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+                onPress={onCancel}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.buttonText, { color: theme.text }]}>Cancel</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity 
               style={[styles.button, { backgroundColor: confirmColor }]} 
@@ -65,15 +69,16 @@ export default function ConfirmModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
   },
   dialogContainer: {
-    width: width - 48,
+    width: Math.min(width - 48, 340),
     borderRadius: 20,
     padding: 24,
+    borderWidth: 1,
     alignItems: 'center',
     elevation: 10,
     shadowColor: '#000',
@@ -108,7 +113,7 @@ const styles = StyleSheet.create({
   button: {
     flex: 1,
     height: 48,
-    borderRadius: 12,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },

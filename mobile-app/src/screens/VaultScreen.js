@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
@@ -14,10 +14,13 @@ import axios from 'axios';
 import { encryptFileAsync, decryptFileAsync } from '../utils/crypto';
 import client from '../api/client';
 import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles } from '../db/Database';
+import ConfirmModal from '../components/ConfirmModal';
+
+const { width } = Dimensions.get('window');
 
 export default function VaultScreen({ route, navigation }) {
   const { vaultPin } = route.params;
-  const { theme } = useContext(ThemeContext);
+  const { theme, isDark } = useContext(ThemeContext);
   const { userToken, isOfflineMode } = useContext(AuthContext);
 
   const [files, setFiles] = useState([]);
@@ -317,7 +320,8 @@ export default function VaultScreen({ route, navigation }) {
         message: `Permanently delete "${selectedItem?.originalFilename}"?`,
         confirmText: "Delete",
         confirmStyle: "destructive",
-        onConfirm: confirmDelete
+        onConfirm: confirmDelete,
+        showCancel: true
       });
     }, 300);
   };
@@ -431,28 +435,22 @@ export default function VaultScreen({ route, navigation }) {
       </TouchableOpacity>
 
       {/* Reusable Alert Modal */}
-      <Modal visible={alertData.visible} transparent animationType="fade">
-        <BlurView intensity={30} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>{alertData.title}</Text>
-            <Text style={[styles.modalMessage, { color: theme.textSecondary }]}>{alertData.message}</Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalButton} onPress={() => setAlertData({ ...alertData, visible: false })}>
-                <Text style={[styles.modalButtonText, { color: theme.text }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalButton} onPress={alertData.onConfirm}>
-                <Text style={[styles.modalButtonText, { 
-                  color: alertData.confirmStyle === 'destructive' ? '#ff3b30' : theme.primary, 
-                  fontWeight: 'bold' 
-                }]}>
-                  {alertData.confirmText}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <ConfirmModal
+        visible={alertData.visible}
+        title={alertData.title}
+        message={alertData.message}
+        confirmText={alertData.confirmText || "Confirm"}
+        confirmStyle={alertData.confirmStyle}
+        onConfirm={() => {
+          setAlertData(prev => ({ ...prev, visible: false }));
+          if (alertData.onConfirm) alertData.onConfirm();
+        }}
+        onCancel={
+          alertData.showCancel
+            ? () => setAlertData(prev => ({ ...prev, visible: false }))
+            : null
+        }
+      />
 
       {/* Action Menu Bottom Sheet */}
       <Modal visible={isActionMenuVisible} transparent animationType="slide">
@@ -488,22 +486,31 @@ export default function VaultScreen({ route, navigation }) {
 
       {/* Rename Modal */}
       <Modal visible={isRenameModalVisible} transparent animationType="fade">
-        <BlurView intensity={30} tint={theme.dark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <BlurView intensity={30} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <View style={[styles.dialogContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Text style={[styles.modalTitle, { color: theme.text }]}>Rename File</Text>
             <TextInput
-              style={[styles.modalInput, { color: theme.text, borderColor: theme.border, borderWidth: 1, padding: 12, borderRadius: 8, marginBottom: 20, fontSize: 16 }]}
+              style={[styles.modalInput, { color: theme.text, borderColor: theme.border }]}
               value={renameText}
               onChangeText={setRenameText}
               autoFocus
             />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={styles.modalButton} onPress={() => setIsRenameModalVisible(false)}>
-                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={[styles.button, styles.cancelButton, { backgroundColor: theme.border }]} 
+                onPress={() => setIsRenameModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.buttonText, { color: theme.text }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalButton} onPress={confirmRename} disabled={!renameText?.trim()}>
-                <Text style={{ color: theme.primary, fontSize: 16, fontWeight: 'bold' }}>Save</Text>
+              <TouchableOpacity 
+                style={[styles.button, { backgroundColor: theme.primary }]} 
+                onPress={confirmRename}
+                disabled={!renameText?.trim()}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.buttonText, { color: '#fff' }]}>Save</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -570,39 +577,55 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
   },
-  modalContent: {
-    width: '100%',
-    maxWidth: 340,
-    borderRadius: 16,
+  dialogContainer: {
+    width: Math.min(width - 48, 340),
+    borderRadius: 20,
     padding: 24,
     borderWidth: 1,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 12,
+    textAlign: 'center',
+    marginBottom: 16,
   },
-  modalMessage: {
+  modalInput: {
+    width: '100%',
+    height: 48,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
     fontSize: 16,
     marginBottom: 24,
-    lineHeight: 22,
   },
-  modalButtons: {
+  buttonRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 16,
+    justifyContent: 'space-between',
+    width: '100%',
   },
-  modalButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+  button: {
+    flex: 1,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  modalButtonText: {
+  cancelButton: {
+    marginRight: 12,
+  },
+  buttonText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: 'bold',
   },
   sheetOverlay: {
     flex: 1,
