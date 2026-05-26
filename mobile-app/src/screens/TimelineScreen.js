@@ -21,7 +21,7 @@ export default function TimelineScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
   const { photos, loading, errorMsg, getSyncedLocalAssets, executeCleanup, refresh, trashPhotos } = useMediaBackup();
   const { autoBackupEnabled, setAutoBackupEnabled, backupAlbums, setBackupAlbums } = useContext(AuthContext);
-  
+
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [assetsToClean, setAssetsToClean] = useState([]);
   const [isCleaning, setIsCleaning] = useState(false);
@@ -82,7 +82,7 @@ export default function TimelineScreen({ navigation }) {
   // Selection Mode State
   const [selectedPhotos, setSelectedPhotos] = useState(new Set());
   const isSelectionMode = selectedPhotos.size > 0;
-  
+
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const toggleSelection = (photoId) => {
@@ -226,24 +226,24 @@ export default function TimelineScreen({ navigation }) {
         if (allOffline) {
           const stored = newReg[photo.id];
           const localPath = typeof stored === 'string' ? stored : stored?.localPath;
-           if (localPath) {
-              const info = await FileSystem.getInfoAsync(localPath);
-              if (info.exists) await FileSystem.deleteAsync(localPath, { idempotent: true });
-              await markPhotoNotAvailableOffline(photo.id);
-              delete newReg[photo.id];
-              hasChanges = true;
-           }
+          if (localPath) {
+            const info = await FileSystem.getInfoAsync(localPath);
+            if (info.exists) await FileSystem.deleteAsync(localPath, { idempotent: true });
+            await markPhotoNotAvailableOffline(photo.id);
+            delete newReg[photo.id];
+            hasChanges = true;
+          }
         } else {
           if (!newReg[photo.id]) {
             const ext = photo.filename ? (photo.filename.split('.').pop() || 'jpg') : 'jpg';
             const localPath = `${OFFLINE_PHOTOS_DIR}${photo.id}.${ext}`;
             const { status } = await FileSystem.downloadAsync(photo.uri, localPath, { headers: photo.headers });
-             if (status === 200) {
-               await upsertPhotoCache(photo);
-               await markPhotoAvailableOffline(photo.id, localPath);
-               newReg[photo.id] = localPath;
-               hasChanges = true;
-             }
+            if (status === 200) {
+              await upsertPhotoCache(photo);
+              await markPhotoAvailableOffline(photo.id, localPath);
+              newReg[photo.id] = localPath;
+              hasChanges = true;
+            }
           }
         }
       }
@@ -304,22 +304,22 @@ export default function TimelineScreen({ navigation }) {
   // Convert flat photos list into sectioned list with headers
   const data = useMemo(() => {
     if (!photos || photos.length === 0) return [];
-    
+
     const sectioned = [];
     let currentDateStr = '';
-    
+
     photos.forEach(photo => {
-      const dateStr = new Date(photo.creationTime).toLocaleDateString(undefined, { 
-        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' 
+      const dateStr = new Date(photo.creationTime).toLocaleDateString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'
       });
-      
+
       if (dateStr !== currentDateStr) {
         sectioned.push({ type: 'header', title: dateStr });
         currentDateStr = dateStr;
       }
       sectioned.push({ type: 'image', ...photo });
     });
-    
+
     return sectioned;
   }, [photos]);
 
@@ -340,25 +340,25 @@ export default function TimelineScreen({ navigation }) {
     const rawY = yPosition - topOffset;
     const maxH = containerHeight.current;
     if (maxH <= 0) return;
-    
+
     let percentage = rawY / maxH;
     percentage = Math.max(0, Math.min(1, percentage));
-    
+
     thumbY.setValue(percentage * maxH);
-    
+
     if (flashListRef.current && contentHeight.current > maxH) {
       const maxOffset = contentHeight.current - maxH;
       const targetOffset = percentage * maxOffset;
       flashListRef.current.scrollToOffset({ offset: targetOffset, animated: false });
-      
+
       const newDate = calculateDateForOffset(percentage);
       if (newDate) {
         // Only format to Month Year to avoid clutter
         const dateParts = newDate.split(' ');
         if (dateParts.length >= 3) {
-           setCurrentScrollDate(`${dateParts[1]} ${dateParts[3]}`); // e.g. "Nov 2026"
+          setCurrentScrollDate(`${dateParts[1]} ${dateParts[3]}`); // e.g. "Nov 2026"
         } else {
-           setCurrentScrollDate(newDate);
+          setCurrentScrollDate(newDate);
         }
       }
     }
@@ -396,7 +396,7 @@ export default function TimelineScreen({ navigation }) {
     const isSelected = selectedPhotos.has(item.id);
 
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={[styles.imageContainer, { backgroundColor: theme.background }]}
         onLongPress={() => {
           if (!isSelectionMode) toggleSelection(item.id);
@@ -418,13 +418,13 @@ export default function TimelineScreen({ navigation }) {
         }}
         activeOpacity={0.7}
       >
-        <Image 
+        <Image
           source={
-            offlinePhotos[item.id] 
-              ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath } 
+            offlinePhotos[item.id]
+              ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath }
               : (item.headers ? { uri: item.uri, headers: item.headers } : { uri: item.uri })
-          } 
-          style={[styles.imageMock, isSelected && { opacity: 0.6 }]} 
+          }
+          style={[styles.imageMock, isSelected && { opacity: 0.6 }]}
         />
         <View style={styles.statusIconContainer}>
           {item.status === 'synced' && !offlinePhotos[item.id] && <Ionicons name="cloud-done" size={20} color="#4CAF50" />}
@@ -464,9 +464,9 @@ export default function TimelineScreen({ navigation }) {
             {selectedPhotos.size > 0 && Array.from(selectedPhotos).some(id => !photos.find(p => p.id === id)?.isLocal) && (
               <TouchableOpacity onPress={handleToggleOfflineSelected} style={{ padding: 8, marginRight: 8 }}>
                 {isDownloadingOffline ? (
-                   <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color="#fff" />
                 ) : (
-                   <Ionicons name="cloud-download-outline" size={24} color="#fff" />
+                  <Ionicons name="cloud-download-outline" size={24} color="#fff" />
                 )}
               </TouchableOpacity>
             )}
@@ -525,8 +525,8 @@ export default function TimelineScreen({ navigation }) {
                   <View>
                     <Text style={[styles.settingsRowTitle, { color: theme.text }]}>Backup Folders</Text>
                     <Text style={{ color: theme.textSecondary, fontSize: 13, marginTop: 2 }}>
-                      {backupAlbums.length === 0 
-                        ? "Default (Camera only)" 
+                      {backupAlbums.length === 0
+                        ? "Default (Camera only)"
                         : `${backupAlbums.length} folder${backupAlbums.length === 1 ? '' : 's'} selected`}
                     </Text>
                   </View>
@@ -589,8 +589,8 @@ export default function TimelineScreen({ navigation }) {
               renderItem={({ item }) => {
                 const isSelected = tempSelectedAlbums.includes(item.id);
                 return (
-                  <TouchableOpacity 
-                    style={[styles.albumRow, { borderBottomColor: theme.border }]} 
+                  <TouchableOpacity
+                    style={[styles.albumRow, { borderBottomColor: theme.border }]}
                     onPress={() => toggleAlbum(item.id)}
                   >
                     <View style={styles.albumRowLeft}>
@@ -628,8 +628,8 @@ export default function TimelineScreen({ navigation }) {
                   This will delete {assetsToClean.length} photos from your device that are already safely backed up to Stark Drive.
                 </Text>
                 <View style={styles.modalButtons}>
-                  <TouchableOpacity 
-                    style={[styles.modalButton, { borderRightWidth: 1, borderColor: theme.border }]} 
+                  <TouchableOpacity
+                    style={[styles.modalButton, { borderRightWidth: 1, borderColor: theme.border }]}
                     onPress={() => setShowCleanupModal(false)}
                     disabled={isCleaning}
                   >
@@ -665,7 +665,7 @@ export default function TimelineScreen({ navigation }) {
           <Ionicons name="warning-outline" size={48} color={theme.textSecondary} style={{ marginBottom: 16 }} />
           <Text style={{ color: theme.text, fontSize: 16, textAlign: 'center', marginBottom: 20 }}>{errorMsg}</Text>
           <TouchableOpacity style={[styles.freeSpaceBtn, { backgroundColor: theme.primary }]} onPress={refresh}>
-             <Text style={styles.freeSpaceText}>Retry</Text>
+            <Text style={styles.freeSpaceText}>Retry</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -702,11 +702,11 @@ export default function TimelineScreen({ navigation }) {
               }
             }}
           />
-          
+
           {/* Custom Fast Scroller */}
           {data.length > 50 && (
-            <View 
-              style={styles.fastScrollerContainer} 
+            <View
+              style={styles.fastScrollerContainer}
               {...panResponder.panHandlers}
             >
               {isFastScrolling && currentScrollDate !== '' && (
@@ -715,11 +715,11 @@ export default function TimelineScreen({ navigation }) {
                   <View style={styles.dateBubbleArrow} />
                 </Animated.View>
               )}
-              <Animated.View 
+              <Animated.View
                 style={[
-                  styles.fastScrollerThumb, 
+                  styles.fastScrollerThumb,
                   { top: thumbY, transform: [{ scaleX: isFastScrolling ? 1.5 : 1 }] }
-                ]} 
+                ]}
               />
             </View>
           )}
@@ -729,23 +729,23 @@ export default function TimelineScreen({ navigation }) {
       {/* Full Screen Image Viewer Modal */}
       <Modal visible={selectedPhotoIndex !== null} transparent animationType="fade" onRequestClose={closeViewer}>
         <View style={styles.viewerOverlay}>
-          <Animated.View 
+          <Animated.View
             style={[styles.viewerHeader, { opacity: overlayOpacity }]}
             pointerEvents={showViewerOverlay ? "auto" : "none"}
           >
-            <TouchableOpacity onPress={closeViewer} style={styles.viewerCloseBtn}>
-              <Ionicons name="close" size={28} color="#fff" />
-            </TouchableOpacity>
+            <View style={{ width: 44 }} />
             {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
               <Text style={styles.viewerDateText}>
-                {new Date(photos[selectedPhotoIndex].creationTime).toLocaleDateString(undefined, { 
+                {new Date(photos[selectedPhotoIndex].creationTime).toLocaleDateString(undefined, {
                   weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
                 })}
               </Text>
             )}
-            <View style={{ width: 44 }} />
+            <TouchableOpacity onPress={closeViewer} style={styles.viewerCloseBtn}>
+              <Ionicons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
           </Animated.View>
-          
+
           <FlatList
             data={photos}
             horizontal
@@ -761,19 +761,11 @@ export default function TimelineScreen({ navigation }) {
             }}
             keyExtractor={(item) => item.id}
             scrollEnabled={!isZoomed}
-            onTouchStart={(evt) => {
-              if (evt.nativeEvent.touches.length >= 2) {
-                setIsZoomed(true);
-              }
-            }}
-            onTouchEnd={() => {
-              setIsZoomed(isCurrentPhotoZoomed.current);
-            }}
             renderItem={({ item }) => (
               <ZoomableImage
                 source={
-                  offlinePhotos[item.id] 
-                    ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath } 
+                  offlinePhotos[item.id]
+                    ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath }
                     : (item.headers ? { uri: item.uri, headers: item.headers } : { uri: item.uri })
                 }
                 style={{ width: '100%', height: '100%' }}
@@ -787,7 +779,7 @@ export default function TimelineScreen({ navigation }) {
           />
 
           {selectedPhotoIndex !== null && photos[selectedPhotoIndex] && (
-            <Animated.View 
+            <Animated.View
               style={[styles.viewerFooterContainer, { opacity: overlayOpacity }]}
               pointerEvents={showViewerOverlay ? "auto" : "none"}
             >
@@ -798,8 +790,8 @@ export default function TimelineScreen({ navigation }) {
                 </TouchableOpacity>
 
                 {!photos[selectedPhotoIndex].isLocal && (
-                  <TouchableOpacity 
-                    onPress={() => toggleOfflinePhoto(photos[selectedPhotoIndex])} 
+                  <TouchableOpacity
+                    onPress={() => toggleOfflinePhoto(photos[selectedPhotoIndex])}
                     style={styles.viewerFooterBtn}
                     disabled={isDownloadingOffline}
                   >
@@ -807,10 +799,10 @@ export default function TimelineScreen({ navigation }) {
                       <ActivityIndicator size="small" color="#fff" />
                     ) : (
                       <>
-                        <Ionicons 
-                          name={offlinePhotos[photos[selectedPhotoIndex].id] ? "cloud-done" : "cloud-download-outline"} 
-                          size={24} 
-                          color={offlinePhotos[photos[selectedPhotoIndex].id] ? "#4CAF50" : "#fff"} 
+                        <Ionicons
+                          name={offlinePhotos[photos[selectedPhotoIndex].id] ? "cloud-done" : "cloud-download-outline"}
+                          size={24}
+                          color={offlinePhotos[photos[selectedPhotoIndex].id] ? "#4CAF50" : "#fff"}
                         />
                         <Text style={[styles.viewerFooterBtnText, offlinePhotos[photos[selectedPhotoIndex].id] && { color: '#4CAF50' }]}>
                           {offlinePhotos[photos[selectedPhotoIndex].id] ? "Offline" : "Download"}

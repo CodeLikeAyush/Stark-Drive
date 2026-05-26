@@ -53,8 +53,6 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
   };
 
   // Reset scale and translation when source URI changes (user swipes to next image)
-  // We compare source.uri instead of the source object reference because the parent
-  // recreates the source object on every render.
   const sourceUri = source?.uri;
   useEffect(() => {
     reset(false);
@@ -101,9 +99,9 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponder: () => false, // Allow taps to bubble up to Pressable on start
       onMoveShouldSetPanResponder: (evt, gestureState) => {
-        // Claim responder on move if pinching (numberActiveTouches >= 2) or already zoomed in
+        // Claim responder on move if pinching or already zoomed in
         const isPinch = gestureState.numberActiveTouches >= 2;
         const isPanning = scaleVal.current > 1.1;
         return isPinch || isPanning;
@@ -124,34 +122,46 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
       onPanResponderMove: (evt, gestureState) => {
         const touches = evt.nativeEvent.touches;
         if (gestureState.numberActiveTouches >= 2 && touches && touches.length >= 2) {
-          if (initialDistance.current) {
+          // Initialize distance dynamically if it wasn't captured on Grant
+          if (!initialDistance.current) {
+            initialDistance.current = getDistance(touches);
+            initialScale.current = scaleVal.current;
+          } else {
             const currentDist = getDistance(touches);
             if (currentDist > 0) {
               let newScale = initialScale.current * (currentDist / initialDistance.current);
               newScale = Math.max(1, Math.min(newScale, 4));
               scale.setValue(newScale);
-              updateZoomState(newScale > 1.1);
+              // Note: We do NOT call updateZoomState(true) here mid-gesture to prevent Android ScrollView cancel resets.
             }
           }
-        } else if (gestureState.numberActiveTouches === 1 && scaleVal.current > 1.1) {
-          const currentScale = scaleVal.current;
-          const maxTx = (screenWidth * (currentScale - 1)) / 2;
-          const maxTy = (screenHeight * (currentScale - 1)) / 2;
+        } else {
+          initialDistance.current = null;
           
-          let nextX = initialTranslate.current.x + gestureState.dx;
-          let nextY = initialTranslate.current.y + gestureState.dy;
+          if (gestureState.numberActiveTouches === 1 && scaleVal.current > 1.1) {
+            const currentScale = scaleVal.current;
+            const maxTx = (screenWidth * (currentScale - 1)) / 2;
+            const maxTy = (screenHeight * (currentScale - 1)) / 2;
+            
+            let nextX = initialTranslate.current.x + gestureState.dx;
+            let nextY = initialTranslate.current.y + gestureState.dy;
 
-          nextX = Math.max(-maxTx, Math.min(nextX, maxTx));
-          nextY = Math.max(-maxTy, Math.min(nextY, maxTy));
-          
-          translate.setValue({
-            x: nextX - initialTranslate.current.x,
-            y: nextY - initialTranslate.current.y
-          });
+            nextX = Math.max(-maxTx, Math.min(nextX, maxTx));
+            nextY = Math.max(-maxTy, Math.min(nextY, maxTy));
+            
+            translate.setValue({
+              x: nextX - initialTranslate.current.x,
+              y: nextY - initialTranslate.current.y
+            });
+          }
         }
       },
       onPanResponderRelease: (evt, gestureState) => {
         translate.flattenOffset();
+        
+        // Defer updating isZoomed state to release phase, preventing Android touch cancels
+        updateZoomState(scaleVal.current > 1.1);
+
         if (scaleVal.current < 1.1) {
           reset(true);
         } else {
