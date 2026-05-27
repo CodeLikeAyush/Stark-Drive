@@ -173,13 +173,7 @@ export default function TimelineScreen({ navigation }) {
     });
   };
 
-  const handleDeleteSelected = () => {
-    setShowDeleteConfirm(true);
-  };
-
-  const confirmDeletePhotos = async () => {
-    setShowDeleteConfirm(false);
-    const selectedArr = photos.filter(p => selectedPhotos.has(p.id));
+  const executeDelete = async (selectedArr) => {
     const success = await trashPhotos(selectedArr);
     if (success) {
       setSelectedPhotos(new Set());
@@ -189,6 +183,23 @@ export default function TimelineScreen({ navigation }) {
         setIsZoomed(false);
       }
     }
+  };
+
+  const handleDeleteSelected = () => {
+    const selectedArr = photos.filter(p => selectedPhotos.has(p.id));
+    const hasRemoteOrSynced = selectedArr.some(p => p.remoteFileId || !p.isLocal);
+
+    if (hasRemoteOrSynced) {
+      setShowDeleteConfirm(true);
+    } else {
+      executeDelete(selectedArr);
+    }
+  };
+
+  const confirmDeletePhotos = async () => {
+    setShowDeleteConfirm(false);
+    const selectedArr = photos.filter(p => selectedPhotos.has(p.id));
+    await executeDelete(selectedArr);
   };
 
   const sharePhoto = async (photo) => {
@@ -259,7 +270,13 @@ export default function TimelineScreen({ navigation }) {
   const handleDeletePhotoFromViewer = (photo) => {
     setSelectedPhotos(new Set([photo.id]));
     setDeleteFromViewer(true);
-    setShowDeleteConfirm(true);
+    
+    const isRemoteOrSynced = photo.remoteFileId || !photo.isLocal;
+    if (isRemoteOrSynced) {
+      setShowDeleteConfirm(true);
+    } else {
+      executeDelete([photo]);
+    }
   };
 
   const handleCancelDelete = () => {
