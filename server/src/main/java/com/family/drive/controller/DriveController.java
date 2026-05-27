@@ -75,6 +75,22 @@ public class DriveController {
                 .body(new org.springframework.core.io.InputStreamResource(stream));
     }
 
+    @GetMapping("/thumbnail/{fileId}")
+    public ResponseEntity<org.springframework.core.io.InputStreamResource> downloadThumbnail(
+            @PathVariable Long fileId,
+            @AuthenticationPrincipal User user
+    ) throws Exception {
+        io.minio.GetObjectResponse stream = driveService.downloadThumbnail(fileId, user);
+        
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.add(org.springframework.http.HttpHeaders.CACHE_CONTROL, "public, max-age=31536000"); // 1 year cache
+        headers.add(org.springframework.http.HttpHeaders.CONTENT_TYPE, "image/jpeg");
+        
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(new org.springframework.core.io.InputStreamResource(stream));
+    }
+
     @DeleteMapping("/items/{type}/{id}")
     public ResponseEntity<Void> deleteItem(
             @PathVariable String type,

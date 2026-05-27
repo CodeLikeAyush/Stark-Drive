@@ -23,6 +23,7 @@ export const initDB = async () => {
         size_bytes INTEGER,
         local_path TEXT,
         is_available_offline INTEGER DEFAULT 0,
+        has_thumbnail INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL
       );
       
@@ -44,6 +45,14 @@ export const initDB = async () => {
         created_at INTEGER NOT NULL
       );
     `);
+
+    // Migration: Add has_thumbnail column to files table if it doesn't exist
+    try {
+      await db.execAsync(`ALTER TABLE files ADD COLUMN has_thumbnail INTEGER DEFAULT 0;`);
+      console.log("Migration: added has_thumbnail column to files table");
+    } catch (e) {
+      // Column probably already exists, which is fine
+    }
     
     console.log("Database initialized successfully");
     return db;
@@ -65,16 +74,17 @@ export const getDB = () => {
 export const upsertFileCache = async (file, isVault = 0) => {
   const database = getDB();
   await database.runAsync(
-    `INSERT INTO files (id, is_vault, parent_id, original_filename, content_type, size_bytes, created_at) 
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO files (id, is_vault, parent_id, original_filename, content_type, size_bytes, has_thumbnail, created_at) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET 
        is_vault=excluded.is_vault, 
        parent_id=excluded.parent_id, 
        original_filename=excluded.original_filename, 
        content_type=excluded.content_type, 
        size_bytes=excluded.size_bytes, 
+       has_thumbnail=excluded.has_thumbnail,
        created_at=excluded.created_at`,
-    [file.id.toString(), isVault, file.parentId ? file.parentId.toString() : null, file.originalFilename || 'Unknown', file.contentType || null, file.sizeBytes || 0, Date.now()]
+    [file.id.toString(), isVault, file.parentId ? file.parentId.toString() : null, file.originalFilename || 'Unknown', file.contentType || null, file.sizeBytes || 0, file.hasThumbnail ? 1 : 0, Date.now()]
   );
 };
 

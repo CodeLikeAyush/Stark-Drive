@@ -50,6 +50,9 @@ public class DriveFile {
     @Column(name = "creation_time")
     private Long creationTime;
 
+    @Column(name = "has_thumbnail", nullable = false, columnDefinition = "boolean default false")
+    private boolean hasThumbnail = false;
+
     public DriveFile() {}
 
     public DriveFile(String name, String originalFilename, String storagePath, Long sizeBytes, String contentType, String fileHash, DriveFolder folder, User user) {
@@ -90,4 +93,6 @@ public class DriveFile {
     public void setBackup(boolean backup) { isBackup = backup; }
     public Long getCreationTime() { return creationTime; }
     public void setCreationTime(Long creationTime) { this.creationTime = creationTime; }
+    public boolean isHasThumbnail() { return hasThumbnail; }
+    public void setHasThumbnail(boolean hasThumbnail) { this.hasThumbnail = hasThumbnail; }
 }

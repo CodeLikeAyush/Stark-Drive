@@ -5,6 +5,8 @@ import com.family.drive.model.DriveFolder;
 import com.family.drive.model.User;
 import com.family.drive.repository.DriveFileRepository;
 import com.family.drive.repository.DriveFolderRepository;
+import com.family.drive.config.RabbitMQConfig;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -17,12 +19,14 @@ public class DriveService {
     private final DriveFolderRepository folderRepository;
     private final DriveFileRepository fileRepository;
     private final io.minio.MinioClient minioClient;
+    private final RabbitTemplate rabbitTemplate;
     private final String BUCKET_NAME = "family-drive";
 
-    public DriveService(DriveFolderRepository folderRepository, DriveFileRepository fileRepository, io.minio.MinioClient minioClient) {
+    public DriveService(DriveFolderRepository folderRepository, DriveFileRepository fileRepository, io.minio.MinioClient minioClient, RabbitTemplate rabbitTemplate) {
         this.folderRepository = folderRepository;
         this.fileRepository = fileRepository;
         this.minioClient = minioClient;
+        this.rabbitTemplate = rabbitTemplate;
         
         try {
             boolean found = minioClient.bucketExists(io.minio.BucketExistsArgs.builder().bucket(BUCKET_NAME).build());
@@ -179,7 +183,29 @@ public class DriveService {
         driveFile.setVault(isVault);
         driveFile.setBackup(isBackup);
         driveFile.setCreationTime(creationTime != null ? creationTime : System.currentTimeMillis());
-        return fileRepository.save(driveFile);
+        
+        DriveFile savedFile = fileRepository.save(driveFile);
+        
+        if (!isVault) {
+            String cType = file.getContentType();
+            String nameLower = finalName.toLowerCase();
+            boolean isImage = (cType != null && cType.startsWith("image/")) 
+                    || nameLower.endsWith(".jpg") || nameLower.endsWith(".jpeg") 
+                    || nameLower.endsWith(".png") || nameLower.endsWith(".gif") 
+                    || nameLower.endsWith(".webp") || nameLower.endsWith(".bmp");
+            boolean isPdf = (cType != null && cType.equals("application/pdf")) 
+                    || nameLower.endsWith(".pdf");
+            
+            if (isImage || isPdf) {
+                try {
+                    rabbitTemplate.convertAndSend(RabbitMQConfig.MEDIA_PROCESSING_QUEUE, savedFile.getId().toString());
+                } catch (Exception e) {
+                    System.err.println("Failed to publish thumbnail message to RabbitMQ: " + e.getMessage());
+                }
+            }
+        }
+        
+        return savedFile;
     }
 
     public io.minio.GetObjectResponse downloadFile(Long fileId, User user) throws Exception {
@@ -194,6 +220,26 @@ public class DriveService {
                 io.minio.GetObjectArgs.builder()
                         .bucket(BUCKET_NAME)
                         .object(driveFile.getStoragePath())
+                        .build()
+        );
+    }
+
+    public io.minio.GetObjectResponse downloadThumbnail(Long fileId, User user) throws Exception {
+        DriveFile driveFile = fileRepository.findById(fileId)
+                .orElseThrow(() -> new RuntimeException("File not found"));
+
+        if (!driveFile.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("Unauthorized");
+        }
+
+        if (!driveFile.isHasThumbnail()) {
+            throw new RuntimeException("Thumbnail not found or not yet generated");
+        }
+
+        return minioClient.getObject(
+                io.minio.GetObjectArgs.builder()
+                        .bucket(BUCKET_NAME)
+                        .object("thumb_" + driveFile.getStoragePath())
                         .build()
         );
     }

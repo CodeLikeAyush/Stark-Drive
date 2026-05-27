@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Dimensions, TextInput, Modal, KeyboardAvoidingView, Platform, ScrollView, PanResponder, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Dimensions, TextInput, Modal, KeyboardAvoidingView, Platform, ScrollView, PanResponder, Animated, Image } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
 import client from '../api/client';
@@ -50,6 +50,8 @@ export default function DriveScreen({ navigation, route }) {
   const [renameText, setRenameText] = useState('');
   const [isMoveModalVisible, setIsMoveModalVisible] = useState(false);
   const [allFolders, setAllFolders] = useState([]);
+  const [thumbnailErrors, setThumbnailErrors] = useState({});
+  const [localThumbnails, setLocalThumbnails] = useState({});
 
   // FAB bottom sheet swipe gesture
   const fabTranslateY = useRef(new Animated.Value(0)).current;
@@ -158,8 +160,17 @@ export default function DriveScreen({ navigation, route }) {
     try {
       const rows = await getOfflineFiles(0);
       const map = {};
-      rows.forEach(r => map[r.id] = r.local_path);
+      const thumbMap = {};
+      for (const r of rows) {
+        map[r.id] = r.local_path;
+        const localThumbPath = `${OFFLINE_DIR}thumb_${r.id}.jpg`;
+        const thumbInfo = await FileSystem.getInfoAsync(localThumbPath);
+        if (thumbInfo.exists) {
+          thumbMap[r.id] = localThumbPath;
+        }
+      }
       setOfflineFiles(map);
+      setLocalThumbnails(thumbMap);
     } catch (e) {
       console.warn('Failed to refresh offline state', e);
     }
@@ -198,7 +209,7 @@ export default function DriveScreen({ navigation, route }) {
       const cachedItems = await getFilesByParent(folderId, 0);
       const folders = cachedItems.filter(i => !i.original_filename || i.original_filename === 'Unknown' || i.content_type === 'folder');
       const files = cachedItems.filter(i => i.original_filename && i.original_filename !== 'Unknown' && i.content_type !== 'folder').map(r => ({
-        id: r.id, originalFilename: r.original_filename, contentType: r.content_type, sizeBytes: r.size_bytes, localPath: r.local_path, parentId: r.parent_id
+        id: r.id, originalFilename: r.original_filename, contentType: r.content_type, sizeBytes: r.size_bytes, localPath: r.local_path, parentId: r.parent_id, hasThumbnail: r.has_thumbnail === 1
       }));
       const mappedFolders = folders.map(r => ({ id: r.id, name: r.original_filename, subFolders: [] }));
 
@@ -443,6 +454,11 @@ export default function DriveScreen({ navigation, route }) {
         const info = await FileSystem.getInfoAsync(localPath);
         if (info.exists) await FileSystem.deleteAsync(localPath);
 
+        // Clean up offline thumbnail if it exists
+        const localThumbPath = `${OFFLINE_DIR}thumb_${fileId}.jpg`;
+        const thumbInfo = await FileSystem.getInfoAsync(localThumbPath);
+        if (thumbInfo.exists) await FileSystem.deleteAsync(localThumbPath);
+
         await markFileNotAvailableOffline(fileId);
       } else {
         const downloadUrl = `${client.defaults.baseURL}/drive/download/${fileId}`;
@@ -455,6 +471,19 @@ export default function DriveScreen({ navigation, route }) {
         if (status === 200) {
           await upsertFileCache(selectedItem, 0);
           await markFileAvailableOffline(fileId, localPath);
+
+          // Download and cache thumbnail locally if it has one
+          if (selectedItem.hasThumbnail) {
+            const thumbUrl = `${client.defaults.baseURL}/drive/thumbnail/${fileId}`;
+            const localThumbPath = `${OFFLINE_DIR}thumb_${fileId}.jpg`;
+            try {
+              await FileSystem.downloadAsync(thumbUrl, localThumbPath, {
+                headers: { Authorization: `Bearer ${userToken}` }
+              });
+            } catch (thumbErr) {
+              console.warn("Failed to download offline thumbnail:", thumbErr);
+            }
+          }
         } else {
           showInfoAlert("Failed to download file for offline use.");
         }
@@ -474,21 +503,61 @@ export default function DriveScreen({ navigation, route }) {
     const name = isFolder ? item.name : item.originalFilename;
 
     if (isGridView) {
+      const hasThumb = !isFolder && item.hasThumbnail && !thumbnailErrors[item.id];
+
       return (
         <TouchableOpacity
-          style={[styles.gridItem, { width: gridItemWidth, backgroundColor: theme.surface, borderColor: theme.border }]}
+          style={[
+            styles.gridItem,
+            {
+              width: gridItemWidth,
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+              padding: hasThumb ? 0 : 12,
+              justifyContent: hasThumb ? 'flex-start' : 'center',
+            }
+          ]}
           onPress={() => isFolder ? navigation.push('Drive', { folderId: item.id, folderName: name }) : handleFilePress(item)}
           onLongPress={() => handleLongPress(item)}
         >
           {downloadingId === item.id ? (
-            <ActivityIndicator size="small" color={theme.primary} style={{ marginBottom: 12 }} />
+            <View style={styles.gridIconContainer}>
+              <ActivityIndicator size="small" color={theme.primary} />
+            </View>
+          ) : hasThumb ? (
+            <>
+              <Image
+                source={
+                  localThumbnails[item.id]
+                    ? { uri: localThumbnails[item.id] }
+                    : {
+                        uri: `${client.defaults.baseURL}/drive/thumbnail/${item.id}`,
+                        headers: { Authorization: `Bearer ${userToken}` }
+                      }
+                }
+                style={styles.gridFullThumbnail}
+                resizeMode="cover"
+                onError={() => setThumbnailErrors(prev => ({ ...prev, [item.id]: true }))}
+              />
+              <View style={styles.gridThumbnailFooter}>
+                <Text style={[styles.gridItemName, { color: theme.text }]} numberOfLines={1} ellipsizeMode="tail">
+                  {name}
+                </Text>
+              </View>
+            </>
           ) : (
-            <MaterialCommunityIcons
-              name={isFolder ? 'folder' : getFileIcon(item.contentType)}
-              size={48}
-              color={isFolder ? theme.primary : theme.textSecondary}
-              style={{ marginBottom: 8 }}
-            />
+            <>
+              <View style={styles.gridIconContainer}>
+                <MaterialCommunityIcons
+                  name={isFolder ? 'folder' : getFileIcon(item.contentType)}
+                  size={44}
+                  color={isFolder ? theme.primary : theme.textSecondary}
+                />
+              </View>
+              <Text style={[styles.gridItemName, { color: theme.text }]} numberOfLines={2} ellipsizeMode="tail">
+                {name}
+              </Text>
+            </>
           )}
 
           {(!isFolder && (offlineFiles[item.id] || offlineTogglingId === item.id)) && (
@@ -500,10 +569,6 @@ export default function DriveScreen({ navigation, route }) {
               )}
             </View>
           )}
-
-          <Text style={[styles.gridItemName, { color: theme.text }]} numberOfLines={2} ellipsizeMode="tail">
-            {name}
-          </Text>
         </TouchableOpacity>
       );
     }
@@ -522,12 +587,31 @@ export default function DriveScreen({ navigation, route }) {
         ]}
         onPress={() => isFolder ? navigation.push('Drive', { folderId: item.id, folderName: name }) : handleFilePress(item)}
       >
-        <MaterialCommunityIcons
-          name={isFolder ? 'folder' : getFileIcon(item.contentType)}
-          size={32}
-          color={isFolder ? theme.primary : theme.textSecondary}
-          style={styles.icon}
-        />
+        {!isFolder && item.hasThumbnail && !thumbnailErrors[item.id] ? (
+          <View style={styles.listIconContainer}>
+            <Image
+              source={
+                localThumbnails[item.id]
+                  ? { uri: localThumbnails[item.id] }
+                  : {
+                      uri: `${client.defaults.baseURL}/drive/thumbnail/${item.id}`,
+                      headers: { Authorization: `Bearer ${userToken}` }
+                    }
+              }
+              style={styles.listThumbnail}
+              resizeMode="cover"
+              onError={() => setThumbnailErrors(prev => ({ ...prev, [item.id]: true }))}
+            />
+          </View>
+        ) : (
+          <View style={styles.listIconContainer}>
+            <MaterialCommunityIcons
+              name={isFolder ? 'folder' : getFileIcon(item.contentType)}
+              size={28}
+              color={isFolder ? theme.primary : theme.textSecondary}
+            />
+          </View>
+        )}
         <View style={styles.itemTextContainer}>
           <Text style={[styles.itemName, { color: theme.text }]} numberOfLines={1}>
             {name}
@@ -861,7 +945,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    height: 110,
+    height: 120,
   },
   firstItem: {
     borderTopLeftRadius: 12,
@@ -1032,5 +1116,42 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  gridIconContainer: {
+    width: 72,
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  gridThumbnail: {
+    width: 72,
+    height: 56,
+    borderRadius: 8,
+  },
+  listIconContainer: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  listThumbnail: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+  },
+  gridFullThumbnail: {
+    width: '100%',
+    height: 84,
+    borderTopLeftRadius: 11,
+    borderTopRightRadius: 11,
+  },
+  gridThumbnailFooter: {
+    width: '100%',
+    height: 34,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
   },
 });
