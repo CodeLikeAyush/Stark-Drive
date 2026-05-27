@@ -498,7 +498,7 @@ export default function TimelineScreen({ navigation }) {
           source={
             offlinePhotos[item.id]
               ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath }
-              : (item.headers ? { uri: item.uri, headers: item.headers } : { uri: item.uri })
+              : (item.headers ? { uri: item.thumbnailUri || item.uri, headers: item.headers } : { uri: item.uri })
           }
           style={[styles.imageMock, isSelected && { opacity: 0.6 }]}
         />

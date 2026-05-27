@@ -70,13 +70,14 @@ export function useMediaBackup() {
     try {
       setLoading(true);
 
-      const doMerge = async (remoteFiles) => {
-        const localAssets = await MediaLibrary.getAssetsAsync({
-          mediaType: 'photo',
-          first: 1000,
-          sortBy: [[MediaLibrary.SortBy.creationTime, false]],
-        });
+      // Fetch local assets once to avoid duplicate calls and resolve reference errors in the cache load block.
+      const localAssets = await MediaLibrary.getAssetsAsync({
+        mediaType: 'photo',
+        first: 1000,
+        sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+      });
 
+      const doMerge = async (remoteFiles) => {
         let cameraAlbumId = null;
         if (!backupAlbums || backupAlbums.length === 0) {
           const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
@@ -123,14 +124,21 @@ export function useMediaBackup() {
         remoteFiles.forEach(file => {
           const filename = file.originalFilename || file.filename;
           if (!localFilenames.has(filename)) {
+            const fileId = file.id || file.remoteFileId;
+            const downloadUrl = `${client.defaults.baseURL}/drive/download/${fileId}`;
+            const thumbnailUri = file.hasThumbnail 
+              ? `${client.defaults.baseURL}/drive/thumbnail/${fileId}`
+              : downloadUrl;
+
             mergedPhotos.push({
-              id: file.id ? file.id.toString() : (file.remoteFileId ? file.remoteFileId.toString() : ''),
-              uri: `${client.defaults.baseURL}/drive/download/${file.id || file.remoteFileId}`,
+              id: fileId ? fileId.toString() : '',
+              uri: downloadUrl,
+              thumbnailUri: thumbnailUri,
               filename: filename,
               creationTime: file.creationTime || new Date(file.createdAt || Date.now()).getTime(),
               status: 'synced',
               isLocal: false,
-              remoteFileId: file.id || file.remoteFileId,
+              remoteFileId: fileId,
               headers: { Authorization: `Bearer ${userToken}` }
             });
           }
@@ -154,7 +162,8 @@ export function useMediaBackup() {
           filename: row.filename,
           isLocal: false,
           remoteFileId: row.remote_file_id || row.id,
-          creationTime: row.creation_time
+          creationTime: row.creation_time,
+          hasThumbnail: row.has_thumbnail === 1
         }));
         await doMerge(cachedRemoteFiles);
         if (cachedRemoteFiles.length > 0 || localAssets.assets.length > 0) {
@@ -172,7 +181,8 @@ export function useMediaBackup() {
             uri: null,
             filename: f.originalFilename,
             creationTime: f.creationTime,
-            remoteFileId: f.id
+            remoteFileId: f.id,
+            hasThumbnail: f.hasThumbnail
           });
         }
         await doMerge(newRemoteFiles);

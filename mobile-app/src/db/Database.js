@@ -34,7 +34,8 @@ export const initDB = async () => {
         creation_time INTEGER NOT NULL,
         local_path TEXT,
         is_available_offline INTEGER DEFAULT 0,
-        remote_file_id TEXT
+        remote_file_id TEXT,
+        has_thumbnail INTEGER DEFAULT 0
       );
       
       CREATE TABLE IF NOT EXISTS action_queue (
@@ -50,6 +51,14 @@ export const initDB = async () => {
     try {
       await db.execAsync(`ALTER TABLE files ADD COLUMN has_thumbnail INTEGER DEFAULT 0;`);
       console.log("Migration: added has_thumbnail column to files table");
+    } catch (e) {
+      // Column probably already exists, which is fine
+    }
+
+    // Migration: Add has_thumbnail column to photos table if it doesn't exist
+    try {
+      await db.execAsync(`ALTER TABLE photos ADD COLUMN has_thumbnail INTEGER DEFAULT 0;`);
+      console.log("Migration: added has_thumbnail column to photos table");
     } catch (e) {
       // Column probably already exists, which is fine
     }
@@ -127,14 +136,22 @@ export const deleteFile = async (id) => {
 export const upsertPhotoCache = async (photo) => {
   const database = getDB();
   await database.runAsync(
-    `INSERT INTO photos (id, uri, filename, creation_time, remote_file_id) 
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO photos (id, uri, filename, creation_time, remote_file_id, has_thumbnail) 
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET 
        uri=excluded.uri, 
        filename=excluded.filename, 
        creation_time=excluded.creation_time, 
-       remote_file_id=excluded.remote_file_id`,
-    [photo.id.toString(), photo.uri || null, photo.filename || 'Unknown', photo.creationTime || Date.now(), photo.remoteFileId ? photo.remoteFileId.toString() : null]
+       remote_file_id=excluded.remote_file_id,
+       has_thumbnail=excluded.has_thumbnail`,
+    [
+      photo.id.toString(),
+      photo.uri || null,
+      photo.filename || 'Unknown',
+      photo.creationTime || Date.now(),
+      photo.remoteFileId ? photo.remoteFileId.toString() : null,
+      photo.hasThumbnail ? 1 : 0
+    ]
   );
 };
 
