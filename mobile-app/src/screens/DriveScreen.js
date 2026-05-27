@@ -330,9 +330,15 @@ export default function DriveScreen({ navigation, route }) {
       }
 
       if (uriToShare) {
-        const isPdf = file.originalFilename.toLowerCase().endsWith('.pdf') || (file.contentType && file.contentType.toLowerCase() === 'application/pdf');
+        const filenameLower = (file.originalFilename || '').toLowerCase();
+        const contentTypeLower = (file.contentType || '').toLowerCase();
+        const isPdf = filenameLower.endsWith('.pdf') || contentTypeLower === 'application/pdf';
+        const isImage = filenameLower.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/) || contentTypeLower.startsWith('image/');
+
         if (isPdf) {
           navigation.navigate('PdfViewer', { pdfUri: uriToShare, fileName: file.originalFilename });
+        } else if (isImage) {
+          navigation.navigate('ImageViewer', { imageUri: uriToShare, fileName: file.originalFilename });
         } else {
           if (await Sharing.isAvailableAsync()) {
             await Sharing.shareAsync(uriToShare);

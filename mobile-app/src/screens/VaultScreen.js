@@ -265,9 +265,15 @@ export default function VaultScreen({ route, navigation }) {
       const decryptedUri = await decryptFileAsync(encryptedUriToDecrypt, vaultPin, ext);
 
       // 3. Open
-      const isPdf = file.originalFilename.toLowerCase().endsWith('.pdf') || (file.contentType && file.contentType.toLowerCase() === 'application/pdf');
+      const filenameLower = (file.originalFilename || '').toLowerCase();
+      const contentTypeLower = (file.contentType || '').toLowerCase();
+      const isPdf = filenameLower.endsWith('.pdf') || contentTypeLower === 'application/pdf';
+      const isImage = filenameLower.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/) || contentTypeLower.startsWith('image/');
+
       if (isPdf) {
         navigation.navigate('PdfViewer', { pdfUri: decryptedUri, fileName: file.originalFilename });
+      } else if (isImage) {
+        navigation.navigate('ImageViewer', { imageUri: decryptedUri, fileName: file.originalFilename });
       } else {
         if (await Sharing.isAvailableAsync()) {
           isSystemUiActive.current = true;

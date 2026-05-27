@@ -17,6 +17,7 @@ import BinScreen from '../screens/BinScreen';
 import ServerSetupScreen from '../screens/ServerSetupScreen';
 import OfflineBand from '../components/OfflineBand';
 import PdfViewerScreen from '../screens/PdfViewerScreen';
+import ImageViewerScreen from '../screens/ImageViewerScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -139,6 +140,7 @@ export default function AppNavigator() {
             <Stack.Screen name="Bin" component={BinScreen} />
             <Stack.Screen name="ServerSetup" component={ServerSetupScreen} />
             <Stack.Screen name="PdfViewer" component={PdfViewerScreen} />
+            <Stack.Screen name="ImageViewer" component={ImageViewerScreen} />
           </>
         )}
       </Stack.Navigator>

@@ -3,7 +3,7 @@ import { View, Image, PanResponder, Animated, Dimensions, StyleSheet, Pressable 
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-export default function ZoomableImage({ source, onTap, onZoomStateChange, style }) {
+export default function ZoomableImage({ source, onTap, onZoomStateChange, style, ...props }) {
   const scale = useRef(new Animated.Value(1)).current;
   const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   
@@ -212,6 +212,7 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style 
             }
           ]}
           resizeMode="contain"
+          {...props}
         />
       </View>
     </Pressable>
