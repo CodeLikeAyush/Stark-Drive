@@ -57,7 +57,9 @@
       ],
       "expo-font",
       "expo-build-properties",
-      "expo-sqlite"
+      "expo-sqlite",
+      "@config-plugins/react-native-pdf",
+      "@config-plugins/react-native-blob-util"
     ]
   }
 }

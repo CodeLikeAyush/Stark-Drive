@@ -330,10 +330,15 @@ export default function DriveScreen({ navigation, route }) {
       }
 
       if (uriToShare) {
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(uriToShare);
+        const isPdf = file.originalFilename.toLowerCase().endsWith('.pdf') || (file.contentType && file.contentType.toLowerCase() === 'application/pdf');
+        if (isPdf) {
+          navigation.navigate('PdfViewer', { pdfUri: uriToShare, fileName: file.originalFilename });
         } else {
-          showInfoAlert("Sharing/viewing is not available on this device");
+          if (await Sharing.isAvailableAsync()) {
+            await Sharing.shareAsync(uriToShare);
+          } else {
+            showInfoAlert("Sharing/viewing is not available on this device");
+          }
         }
       }
     } catch (e) {

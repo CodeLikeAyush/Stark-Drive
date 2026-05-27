@@ -265,18 +265,23 @@ export default function VaultScreen({ route, navigation }) {
       const decryptedUri = await decryptFileAsync(encryptedUriToDecrypt, vaultPin, ext);
 
       // 3. Open
-      if (await Sharing.isAvailableAsync()) {
-        isSystemUiActive.current = true;
-        await Sharing.shareAsync(decryptedUri);
-        isSystemUiActive.current = false;
+      const isPdf = file.originalFilename.toLowerCase().endsWith('.pdf') || (file.contentType && file.contentType.toLowerCase() === 'application/pdf');
+      if (isPdf) {
+        navigation.navigate('PdfViewer', { pdfUri: decryptedUri, fileName: file.originalFilename });
       } else {
-        setAlertData({
-          visible: true,
-          title: "Error",
-          message: "Sharing is not available on this device",
-          confirmText: "OK",
-          onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
-        });
+        if (await Sharing.isAvailableAsync()) {
+          isSystemUiActive.current = true;
+          await Sharing.shareAsync(decryptedUri);
+          isSystemUiActive.current = false;
+        } else {
+          setAlertData({
+            visible: true,
+            title: "Error",
+            message: "Sharing is not available on this device",
+            confirmText: "OK",
+            onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+          });
+        }
       }
 
       // Cleanup
