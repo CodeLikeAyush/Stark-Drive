@@ -1,11 +1,12 @@
-import React, { useContext } from 'react';
+import React, { useContext, useEffect, useRef } from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Linking } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import LoginScreen from '../screens/LoginScreen';
 import DriveScreen from '../screens/DriveScreen';
@@ -115,9 +116,75 @@ function VaultStack() {
   );
 }
 
+export const navigationRef = createNavigationContainerRef();
+
 export default function AppNavigator() {
   const { userToken, isLoading, serverUrl } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
+  const initialUrlRef = useRef(null);
+
+  const handleIncomingUrl = async (url) => {
+    if (!url) return;
+    console.log("[DeepLink] Received incoming URL:", url);
+
+    const isPdf = url.startsWith('file://') || url.startsWith('content://') || url.toLowerCase().endsWith('.pdf');
+    if (isPdf) {
+      let fileName = 'PDF Document';
+      try {
+        const decodedUrl = decodeURIComponent(url);
+        const parts = decodedUrl.split('/');
+        const lastPart = parts[parts.length - 1];
+        if (lastPart) {
+          fileName = lastPart;
+        }
+        if (!fileName.toLowerCase().endsWith('.pdf')) {
+          fileName += '.pdf';
+        }
+      } catch (e) {
+        console.warn("[DeepLink] Failed to parse filename", e);
+      }
+
+      try {
+        const tempPath = `${FileSystem.cacheDirectory}temp_incoming_${Date.now()}.pdf`;
+        await FileSystem.copyAsync({
+          from: url,
+          to: tempPath
+        });
+
+        console.log("[DeepLink] Copied file to local cache path:", tempPath);
+
+        if (navigationRef.isReady()) {
+          navigationRef.navigate('PdfViewer', { pdfUri: tempPath, fileName });
+        } else {
+          initialUrlRef.current = null;
+        }
+      } catch (err) {
+        console.error("[DeepLink] Error handling incoming PDF file", err);
+      }
+    }
+  };
+
+  useEffect(() => {
+    // Listen for incoming URLs when the app is running
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      handleIncomingUrl(url);
+    });
+
+    // Check if the app was launched by a URL
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        if (navigationRef.isReady()) {
+          handleIncomingUrl(url);
+        } else {
+          initialUrlRef.current = url;
+        }
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   if (isLoading) {
     return (
@@ -128,7 +195,15 @@ export default function AppNavigator() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={() => {
+        if (initialUrlRef.current) {
+          handleIncomingUrl(initialUrlRef.current);
+          initialUrlRef.current = null;
+        }
+      }}
+    >
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!serverUrl ? (
           <Stack.Screen name="ServerSetup" component={ServerSetupScreen} />
@@ -139,10 +214,10 @@ export default function AppNavigator() {
             <Stack.Screen name="Main" component={MainTabs} />
             <Stack.Screen name="Bin" component={BinScreen} />
             <Stack.Screen name="ServerSetup" component={ServerSetupScreen} />
-            <Stack.Screen name="PdfViewer" component={PdfViewerScreen} />
-            <Stack.Screen name="ImageViewer" component={ImageViewerScreen} />
           </>
         )}
+        <Stack.Screen name="PdfViewer" component={PdfViewerScreen} />
+        <Stack.Screen name="ImageViewer" component={ImageViewerScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
