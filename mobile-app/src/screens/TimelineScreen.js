@@ -12,11 +12,14 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import ConfirmModal from '../components/ConfirmModal';
 import ZoomableImage from '../components/ZoomableImage';
+import VaultPinModal from '../components/VaultPinModal';
+import { encryptFileAsync } from '../utils/crypto';
+import client from '../api/client';
 
 export default function TimelineScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
   const { photos, loading, errorMsg, getSyncedLocalAssets, executeCleanup, refresh, trashPhotos } = useMediaBackup();
-  const { autoBackupEnabled, setAutoBackupEnabled, backupAlbums, setBackupAlbums } = useContext(AuthContext);
+  const { autoBackupEnabled, setAutoBackupEnabled, backupAlbums, setBackupAlbums, hasVaultSetup, userToken } = useContext(AuthContext);
 
   const { width, height } = useWindowDimensions();
   const columnCount = width > 1200 ? 8 : width > 768 ? 5 : 3;
@@ -84,6 +87,166 @@ export default function TimelineScreen({ navigation }) {
   const isSelectionMode = selectedPhotos.size > 0;
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const [isVaultPinModalVisible, setIsVaultPinModalVisible] = useState(false);
+  const [isMovingToVault, setIsMovingToVault] = useState(false);
+  const [photosToMove, setPhotosToMove] = useState([]);
+  const [alertData, setAlertData] = useState({ visible: false, title: '', message: '', confirmText: 'OK', confirmStyle: 'default', onConfirm: null });
+
+  const handleMoveSinglePhotoToVault = (photo) => {
+    if (!hasVaultSetup) {
+      setAlertData({
+        visible: true,
+        title: "Vault Setup Required",
+        message: "Please set up your Secure Vault in the Vault tab first.",
+        confirmText: "OK"
+      });
+      return;
+    }
+    setPhotosToMove([photo]);
+    setIsVaultPinModalVisible(true);
+  };
+
+  const handleMoveSelectedPhotosToVault = () => {
+    if (!hasVaultSetup) {
+      setAlertData({
+        visible: true,
+        title: "Vault Setup Required",
+        message: "Please set up your Secure Vault in the Vault tab first.",
+        confirmText: "OK"
+      });
+      return;
+    }
+    const selectedArr = photos.filter(p => selectedPhotos.has(p.id));
+    if (selectedArr.length === 0) return;
+    setPhotosToMove(selectedArr);
+    setIsVaultPinModalVisible(true);
+  };
+
+  const confirmMovePhotosToVault = async (pin) => {
+    setIsVaultPinModalVisible(false);
+    if (photosToMove.length === 0) return;
+
+    setIsMovingToVault(true);
+    let successCount = 0;
+    
+    try {
+      for (const photo of photosToMove) {
+        let tempLocalUri = null;
+        let encryptedUri = null;
+        
+        try {
+          // 1. Get local uri
+          if (photo.isLocal) {
+            let assetUri = photo.uri;
+            try {
+              const assetInfo = await MediaLibrary.getAssetInfoAsync(photo.id);
+              assetUri = assetInfo.localUri || assetInfo.uri;
+            } catch (infoErr) {
+              console.log("Failed to get asset info:", infoErr);
+            }
+            
+            tempLocalUri = `${FileSystem.cacheDirectory}temp_vault_move_${Date.now()}_${photo.filename}`;
+            await FileSystem.copyAsync({ from: assetUri, to: tempLocalUri });
+          } else {
+            // Download remote photo
+            tempLocalUri = `${FileSystem.documentDirectory}temp_vault_move_${Date.now()}_${photo.filename}`;
+            const { status } = await FileSystem.downloadAsync(photo.uri, tempLocalUri, {
+              headers: photo.headers
+            });
+            if (status !== 200) {
+              throw new Error("Failed to download remote photo");
+            }
+          }
+          
+          // 2. Encrypt locally
+          encryptedUri = await encryptFileAsync(tempLocalUri, pin);
+          
+          // 3. Upload encrypted file to Vault
+          const uploadResult = await FileSystem.uploadAsync(
+            `${client.defaults.baseURL}/drive/upload`,
+            encryptedUri,
+            {
+              httpMethod: 'POST',
+              uploadType: 1, // MULTIPART
+              fieldName: 'file',
+              mimeType: 'application/octet-stream',
+              parameters: {
+                originalName: photo.filename,
+                isVault: 'true',
+                creationTime: photo.creationTime ? photo.creationTime.toString() : Date.now().toString()
+              },
+              headers: {
+                Authorization: `Bearer ${userToken}`
+              }
+            }
+          );
+          
+          if (uploadResult.status !== 200) {
+            throw new Error("Upload failed");
+          }
+          
+          // Clean up temp local files
+          await FileSystem.deleteAsync(tempLocalUri, { idempotent: true });
+          await FileSystem.deleteAsync(encryptedUri, { idempotent: true });
+          tempLocalUri = null;
+          encryptedUri = null;
+
+          // Delete locally cached offline thumbnail if it exists
+          const localThumbPath = `${FileSystem.documentDirectory}offline_photos/thumb_${photo.id}.jpg`;
+          const thumbInfo = await FileSystem.getInfoAsync(localThumbPath);
+          if (thumbInfo.exists) {
+            await FileSystem.deleteAsync(localThumbPath, { idempotent: true });
+          }
+          
+          // 4. Delete original unencrypted photo
+          await trashPhotos([photo]);
+          successCount++;
+        } catch (itemErr) {
+          console.error("Failed to move photo:", photo.filename, itemErr);
+        } finally {
+          if (tempLocalUri) {
+            await FileSystem.deleteAsync(tempLocalUri, { idempotent: true }).catch(() => {});
+          }
+          if (encryptedUri) {
+            await FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => {});
+          }
+        }
+      }
+      
+      if (successCount === photosToMove.length) {
+        setAlertData({
+          visible: true,
+          title: "Success",
+          message: `${successCount} photo(s) moved to your secure vault.`,
+          confirmText: "OK"
+        });
+      } else {
+        setAlertData({
+          visible: true,
+          title: "Partial Success",
+          message: `Moved ${successCount} of ${photosToMove.length} photo(s) to vault.`,
+          confirmText: "OK"
+        });
+      }
+      
+      // Clear states
+      setSelectedPhotos(new Set());
+      setSelectedPhotoIndex(null);
+      refresh();
+    } catch (e) {
+      console.error(e);
+      setAlertData({
+        visible: true,
+        title: "Error",
+        message: "Move operation encountered an error.",
+        confirmText: "OK"
+      });
+    } finally {
+      setIsMovingToVault(false);
+      setPhotosToMove([]);
+    }
+  };
 
   // Settings bottom sheet swipe gesture
   const settingsTranslateY = useRef(new Animated.Value(0)).current;
@@ -568,6 +731,11 @@ export default function TimelineScreen({ navigation }) {
                 <Ionicons name="share-social" size={24} color="#fff" />
               </TouchableOpacity>
             )}
+            {selectedPhotos.size > 0 && (
+              <TouchableOpacity onPress={handleMoveSelectedPhotosToVault} style={{ padding: 8, marginRight: 8 }}>
+                <MaterialCommunityIcons name="safe" size={24} color="#fff" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity onPress={handleDeleteSelected} style={{ padding: 8 }}>
               <Ionicons name="trash" size={24} color="#fff" />
             </TouchableOpacity>
@@ -939,6 +1107,11 @@ export default function TimelineScreen({ navigation }) {
                   </TouchableOpacity>
                 )}
 
+                <TouchableOpacity onPress={() => handleMoveSinglePhotoToVault(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
+                  <MaterialCommunityIcons name="safe" size={24} color="#fff" />
+                  <Text style={styles.viewerFooterBtnText}>Move to Vault</Text>
+                </TouchableOpacity>
+
                 <TouchableOpacity onPress={() => handleDeletePhotoFromViewer(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
                   <Ionicons name="trash-outline" size={24} color="#FF3B30" />
                   <Text style={[styles.viewerFooterBtnText, { color: '#FF3B30' }]}>Delete</Text>
@@ -948,6 +1121,36 @@ export default function TimelineScreen({ navigation }) {
           )}
         </View>
       </Modal>
+
+      <VaultPinModal
+        visible={isVaultPinModalVisible}
+        onSuccess={confirmMovePhotosToVault}
+        onCancel={() => setIsVaultPinModalVisible(false)}
+      />
+
+      <ConfirmModal
+        visible={alertData.visible}
+        title={alertData.title}
+        message={alertData.message}
+        confirmText={alertData.confirmText}
+        confirmStyle={alertData.confirmStyle}
+        onConfirm={() => {
+          setAlertData(prev => ({ ...prev, visible: false }));
+          if (alertData.onConfirm) alertData.onConfirm();
+        }}
+        onCancel={
+          alertData.onConfirm
+            ? () => setAlertData(prev => ({ ...prev, visible: false }))
+            : null
+        }
+      />
+
+      {isMovingToVault && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={{ color: '#fff', marginTop: 12, fontWeight: 'bold' }}>Encrypting and moving to Vault...</Text>
+        </View>
+      )}
 
     </View>
   );
@@ -1241,5 +1444,12 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '500',
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
   }
 });

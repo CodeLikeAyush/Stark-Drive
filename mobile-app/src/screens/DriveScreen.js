@@ -9,8 +9,10 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles } from '../db/Database';
+import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles, deleteFile } from '../db/Database';
 import ConfirmModal from '../components/ConfirmModal';
+import VaultPinModal from '../components/VaultPinModal';
+import { encryptFileAsync } from '../utils/crypto';
 
 const gridSpacing = 16;
 
@@ -146,7 +148,10 @@ export default function DriveScreen({ navigation, route }) {
   ).current;
 
   const { theme, isDark } = useContext(ThemeContext);
-  const { userToken, isOfflineMode } = useContext(AuthContext);
+  const { userToken, isOfflineMode, hasVaultSetup } = useContext(AuthContext);
+
+  const [isVaultPinModalVisible, setIsVaultPinModalVisible] = useState(false);
+  const [isMovingToVault, setIsMovingToVault] = useState(false);
 
   const getFileIcon = (contentType) => {
     if (!contentType) return 'file';
@@ -453,6 +458,116 @@ export default function DriveScreen({ navigation, route }) {
       fetchDirectory();
     } catch (e) {
       showInfoAlert("Move failed. Cannot move into itself.");
+    }
+  };
+
+  const handleMoveToVault = () => {
+    if (!hasVaultSetup) {
+      setAlertData({
+        visible: true,
+        title: "Vault Setup Required",
+        message: "Please set up your Secure Vault in the Vault tab first.",
+        confirmText: "OK"
+      });
+      return;
+    }
+    setIsActionMenuVisible(false);
+    setTimeout(() => setIsVaultPinModalVisible(true), 300);
+  };
+
+  const confirmMoveToVault = async (pin) => {
+    setIsVaultPinModalVisible(false);
+    if (!selectedItem) return;
+    
+    setIsMovingToVault(true);
+    let tempLocalUri = null;
+    let encryptedUri = null;
+    try {
+      // 1. Download/get plain file locally
+      const downloadUrl = `${client.defaults.baseURL}/drive/download/${selectedItem.id}`;
+      tempLocalUri = `${FileSystem.documentDirectory}temp_vault_move_${Date.now()}_${selectedItem.originalFilename}`;
+      
+      const { uri, status } = await FileSystem.downloadAsync(downloadUrl, tempLocalUri, {
+        headers: { Authorization: `Bearer ${userToken}` }
+      });
+      
+      if (status !== 200) {
+        throw new Error("Failed to download file from server.");
+      }
+      
+      // 2. Encrypt locally
+      encryptedUri = await encryptFileAsync(uri, pin);
+      
+      // 3. Upload encrypted file to Vault
+      const uploadResult = await FileSystem.uploadAsync(
+        `${client.defaults.baseURL}/drive/upload`,
+        encryptedUri,
+        {
+          httpMethod: 'POST',
+          uploadType: 1, // MULTIPART
+          fieldName: 'file',
+          mimeType: 'application/octet-stream',
+          parameters: {
+            originalName: selectedItem.originalFilename,
+            isVault: 'true'
+          },
+          headers: {
+            Authorization: `Bearer ${userToken}`
+          }
+        }
+      );
+      
+      if (uploadResult.status !== 200) {
+        throw new Error("Failed to upload encrypted file to vault.");
+      }
+      
+      // 4. Delete local and remote unencrypted versions (and local thumbnail if present)
+      await FileSystem.deleteAsync(tempLocalUri, { idempotent: true });
+      await FileSystem.deleteAsync(encryptedUri, { idempotent: true });
+      tempLocalUri = null;
+      encryptedUri = null;
+
+      // Delete locally cached thumbnail if it exists
+      const localThumbPath = `${OFFLINE_DIR}thumb_${selectedItem.id}.jpg`;
+      const thumbInfo = await FileSystem.getInfoAsync(localThumbPath);
+      if (thumbInfo.exists) {
+        await FileSystem.deleteAsync(localThumbPath, { idempotent: true });
+        // Clean up from state
+        setLocalThumbnails(prev => {
+          const updated = { ...prev };
+          delete updated[selectedItem.id];
+          return updated;
+        });
+      }
+      
+      // Delete original unencrypted file from server and SQLite
+      await client.delete(`/drive/items/file/${selectedItem.id}`);
+      await deleteFile(selectedItem.id);
+      
+      setAlertData({
+        visible: true,
+        title: "Moved to Vault",
+        message: `"${selectedItem.originalFilename}" has been encrypted and moved to your secure vault.`,
+        confirmText: "OK"
+      });
+      
+      fetchDirectory();
+    } catch (error) {
+      console.error("Move to Vault failed:", error);
+      setAlertData({
+        visible: true,
+        title: "Move to Vault Failed",
+        message: error.message || "An error occurred during the move operation.",
+        confirmText: "OK"
+      });
+    } finally {
+      setIsMovingToVault(false);
+      if (tempLocalUri) {
+        await FileSystem.deleteAsync(tempLocalUri, { idempotent: true }).catch(() => {});
+      }
+      if (encryptedUri) {
+        await FileSystem.deleteAsync(encryptedUri, { idempotent: true }).catch(() => {});
+      }
     }
   };
 
@@ -765,15 +880,22 @@ export default function DriveScreen({ navigation, route }) {
               </View>
 
               {(!('subFolders' in (selectedItem || {})) && selectedItem?.originalFilename) && (
-                <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
-                  <MaterialCommunityIcons
-                    name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"}
-                    size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon}
-                  />
-                  <Text style={[styles.sheetButtonText, { color: theme.text }]}>
-                    {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
-                  </Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={toggleOffline}>
+                    <MaterialCommunityIcons
+                      name={offlineFiles[selectedItem?.id] ? "cloud-check" : "cloud-download-outline"}
+                      size={24} color={offlineFiles[selectedItem?.id] ? theme.primary : theme.text} style={styles.sheetIcon}
+                    />
+                    <Text style={[styles.sheetButtonText, { color: theme.text }]}>
+                      {offlineFiles[selectedItem?.id] ? "Remove from Device" : "Make Available Offline"}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={handleMoveToVault}>
+                    <MaterialCommunityIcons name="safe" size={24} color={theme.text} style={styles.sheetIcon} />
+                    <Text style={[styles.sheetButtonText, { color: theme.text }]}>Move to Vault</Text>
+                  </TouchableOpacity>
+                </>
               )}
 
               <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openRenameModal}>
@@ -918,6 +1040,19 @@ export default function DriveScreen({ navigation, route }) {
             : null
         }
       />
+
+      <VaultPinModal
+        visible={isVaultPinModalVisible}
+        onSuccess={confirmMoveToVault}
+        onCancel={() => setIsVaultPinModalVisible(false)}
+      />
+
+      {isMovingToVault && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={{ color: '#fff', marginTop: 12, fontWeight: 'bold' }}>Encrypting and moving to Vault...</Text>
+        </View>
+      )}
 
     </View>
   );
@@ -1180,5 +1315,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 8,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
   },
 });

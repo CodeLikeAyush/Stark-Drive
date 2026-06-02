@@ -142,6 +142,15 @@ export const AuthProvider = ({ children }) => {
     setBackupAlbums(albums);
   };
 
+  const updateHasVaultSetup = async (value) => {
+    try {
+      await SecureStore.setItemAsync('hasVaultSetup', value ? 'true' : 'false');
+    } catch (e) {
+      console.warn("SecureStore error saving hasVaultSetup", e);
+    }
+    setHasVaultSetup(value);
+  };
+
   const logout = async () => {
     await SecureStore.deleteItemAsync('userToken');
     await SecureStore.deleteItemAsync('userEmail');
@@ -160,7 +169,7 @@ export const AuthProvider = ({ children }) => {
       login, register, logout, updateUserName, 
       setAutoBackupEnabled: updateAutoBackupEnabled, 
       setBackupAlbums: updateBackupAlbums,
-      setHasVaultSetup,
+      setHasVaultSetup: updateHasVaultSetup,
       connectServer, disconnectServer
     }}>
       {children}

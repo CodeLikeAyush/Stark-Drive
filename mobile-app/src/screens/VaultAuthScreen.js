@@ -6,6 +6,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { deriveKeyFromPin } from '../utils/crypto';
 import { AuthContext } from '../context/AuthContext';
+import client from '../api/client';
 
 import { useIsFocused } from '@react-navigation/native';
 
@@ -47,6 +48,15 @@ export default function VaultAuthScreen({ navigation }) {
         }
 
         setIsSettingUp(false);
+
+        if (!hasVaultSetup) {
+          setHasVaultSetup(true);
+          try {
+            await client.put('/auth/vault-setup');
+          } catch (e) {
+            console.warn("Failed to sync vault setup with server", e);
+          }
+        }
 
         if (AppState.currentState === 'active' && isFocused && !hasPrompted.current) {
           hasPrompted.current = true;
