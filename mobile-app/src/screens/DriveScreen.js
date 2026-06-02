@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Dimensions, TextInput, Modal, KeyboardAvoidingView, Platform, ScrollView, PanResponder, Animated, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, TextInput, Modal, KeyboardAvoidingView, Platform, ScrollView, PanResponder, Animated, Image, useWindowDimensions } from 'react-native';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
 import client from '../api/client';
@@ -13,14 +13,30 @@ import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNo
 import ConfirmModal from '../components/ConfirmModal';
 
 const gridSpacing = 16;
-const { width } = Dimensions.get('window');
 
 export default function DriveScreen({ navigation, route }) {
   const { folderId, folderName } = route.params || {};
   const [data, setData] = useState({ folders: [], files: [] });
   const [loading, setLoading] = useState(true);
 
-  const numColumns = width > 768 ? 5 : 3;
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
+  const numColumns = width > 1024 ? 7 : width > 768 ? 5 : 3;
+  
+  let listColumns = 1;
+  if (width > 1024) {
+    listColumns = isLandscape ? 4 : 2;
+  } else if (width > 768) {
+    listColumns = isLandscape ? 3 : 2;
+  } else if (width > 480) {
+    listColumns = isLandscape ? 3 : 2;
+  } else {
+    listColumns = isLandscape ? 2 : 1;
+  }
+
+  const activeColumns = isGridView ? numColumns : listColumns;
+
   const gridItemWidth = (width - gridSpacing * (numColumns + 1)) / numColumns;
   const [isGridView, setIsGridView] = useState(true);
   const [downloadingId, setDownloadingId] = useState(null);
@@ -581,9 +597,17 @@ export default function DriveScreen({ navigation, route }) {
       <TouchableOpacity
         style={[
           styles.listItem,
-          { backgroundColor: theme.surface, borderBottomColor: theme.border },
-          isFirst && styles.firstItem,
-          isLast && { borderBottomWidth: 0, ...styles.lastItem }
+          { 
+            backgroundColor: theme.surface, 
+            borderBottomColor: theme.border,
+            flex: listColumns > 1 ? 1 : undefined,
+            marginHorizontal: listColumns > 1 ? 8 : 0,
+            marginBottom: listColumns > 1 ? 8 : 0,
+            borderBottomWidth: listColumns > 1 ? 0 : StyleSheet.hairlineWidth,
+            borderRadius: listColumns > 1 ? 12 : 0,
+          },
+          listColumns === 1 ? isFirst && styles.firstItem : null,
+          listColumns === 1 ? isLast && { borderBottomWidth: 0, ...styles.lastItem } : null
         ]}
         onPress={() => isFolder ? navigation.push('Drive', { folderId: item.id, folderName: name }) : handleFilePress(item)}
       >
@@ -663,11 +687,11 @@ export default function DriveScreen({ navigation, route }) {
         <View style={styles.centered}><ActivityIndicator size="large" color={theme.primary} /></View>
       ) : (
         <FlatList
-          key={isGridView ? `grid-${numColumns}` : 'list'}
+          key={isGridView ? `grid-${numColumns}` : `list-${listColumns}`}
           data={items}
-          numColumns={isGridView ? numColumns : 1}
+          numColumns={isGridView ? numColumns : listColumns}
           contentContainerStyle={isGridView ? styles.gridContent : styles.listContent}
-          columnWrapperStyle={isGridView ? styles.gridRow : undefined}
+          columnWrapperStyle={(isGridView || listColumns > 1) ? styles.gridRow : undefined}
           keyExtractor={item => (item.originalFilename ? 'f-' : 'd-') + item.id}
           renderItem={renderItem}
           ListEmptyComponent={<Text style={[styles.empty, { color: theme.textSecondary }]}>{searchQuery ? 'No results found' : 'This folder is empty'}</Text>}
@@ -991,7 +1015,8 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   dialogContainer: {
-    width: Math.min(width - 48, 340),
+    width: '90%',
+    maxWidth: 340,
     borderRadius: 20,
     padding: 24,
     borderWidth: 1,
@@ -1042,6 +1067,8 @@ const styles = StyleSheet.create({
   },
   bottomSheet: {
     width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     padding: 24,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,

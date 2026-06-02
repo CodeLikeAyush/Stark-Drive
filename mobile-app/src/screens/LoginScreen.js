@@ -1,5 +1,5 @@
 import React, { useState, useContext } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
@@ -14,6 +14,9 @@ export default function LoginScreen() {
 
   const { login, register } = useContext(AuthContext);
   const { theme } = useContext(ThemeContext);
+
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height && width > 550;
 
   const handleAuth = async () => {
     setLoading(true);
@@ -36,81 +39,89 @@ export default function LoginScreen() {
       style={[styles.container, { backgroundColor: theme.background }]} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.content}>
-        <View style={styles.iconContainer}>
-          <Ionicons name="cloud" size={64} color={theme.primary} />
-        </View>
-        <Text style={[styles.title, { color: theme.text }]}>Stark Drive</Text>
-        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-          {isRegistering ? 'Create your secure account.' : 'Sign in to access your vault.'}
-        </Text>
-
-        <View style={[styles.formContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[styles.formTitle, { color: theme.text }]}>
-            {isRegistering ? 'Sign Up' : 'Sign In'}
-          </Text>
-
-          {error && <Text style={styles.errorText}>{error}</Text>}
-
-          {isRegistering && (
-            <TextInput
-              style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
-              placeholder="Full Name (Optional)"
-              placeholderTextColor={theme.textSecondary}
-              autoCapitalize="words"
-              value={name}
-              onChangeText={setName}
-            />
-          )}
-
-          <TextInput
-            style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
-            placeholder="Email address"
-            placeholderTextColor={theme.textSecondary}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
-
-          <TextInput
-            style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
-            placeholder="Password"
-            placeholderTextColor={theme.textSecondary}
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
-
-          <TouchableOpacity 
-            style={[styles.button, { backgroundColor: theme.primary }]} 
-            onPress={handleAuth}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>{isRegistering ? 'Create Account' : 'Sign In'}</Text>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.switchContainer} 
-            onPress={() => {
-              setIsRegistering(!isRegistering);
-              setError(null);
-            }}
-            activeOpacity={0.6}
-          >
-            <Text style={[styles.switchText, { color: theme.textSecondary }]}>
-              {isRegistering ? 'Already have an account? ' : "Don't have an account? "}
-              <Text style={{ color: theme.primary, fontWeight: 'bold' }}>
-                {isRegistering ? 'Sign In' : 'Sign Up'}
+      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+        <View style={styles.content}>
+          <View style={isLandscape ? styles.landscapeContainer : styles.portraitContainer}>
+            <View style={isLandscape ? styles.landscapeLeft : styles.portraitHeader}>
+              <View style={styles.iconContainer}>
+                <Ionicons name="cloud" size={64} color={theme.primary} />
+              </View>
+              <Text style={[styles.title, { color: theme.text }]}>Stark Drive</Text>
+              <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+                {isRegistering ? 'Create your secure account.' : 'Sign in to access your vault.'}
               </Text>
-            </Text>
-          </TouchableOpacity>
+            </View>
+
+            <View style={isLandscape ? styles.landscapeRight : styles.portraitForm}>
+              <View style={[styles.formContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <Text style={[styles.formTitle, { color: theme.text }]}>
+                  {isRegistering ? 'Sign Up' : 'Sign In'}
+                </Text>
+
+                {error && <Text style={styles.errorText}>{error}</Text>}
+
+                {isRegistering && (
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
+                    placeholder="Full Name (Optional)"
+                    placeholderTextColor={theme.textSecondary}
+                    autoCapitalize="words"
+                    value={name}
+                    onChangeText={setName}
+                  />
+                )}
+
+                <TextInput
+                  style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
+                  placeholder="Email address"
+                  placeholderTextColor={theme.textSecondary}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  value={email}
+                  onChangeText={setEmail}
+                />
+
+                <TextInput
+                  style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
+                  placeholder="Password"
+                  placeholderTextColor={theme.textSecondary}
+                  secureTextEntry
+                  value={password}
+                  onChangeText={setPassword}
+                />
+
+                <TouchableOpacity 
+                  style={[styles.button, { backgroundColor: theme.primary }]} 
+                  onPress={handleAuth}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.buttonText}>{isRegistering ? 'Create Account' : 'Sign In'}</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.switchContainer} 
+                  onPress={() => {
+                    setIsRegistering(!isRegistering);
+                    setError(null);
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <Text style={[styles.switchText, { color: theme.textSecondary }]}>
+                    {isRegistering ? 'Already have an account? ' : "Don't have an account? "}
+                    <Text style={{ color: theme.primary, fontWeight: 'bold' }}>
+                      {isRegistering ? 'Sign In' : 'Sign Up'}
+                    </Text>
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
         </View>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -119,11 +130,45 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  scrollContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   content: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+  },
+  landscapeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 900,
+  },
+  landscapeLeft: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 48,
+  },
+  landscapeRight: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 400,
+  },
+  portraitContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  portraitHeader: {
+    alignItems: 'center',
+  },
+  portraitForm: {
+    width: '100%',
+    maxWidth: 400,
   },
   iconContainer: {
     width: 120,
@@ -146,7 +191,6 @@ const styles = StyleSheet.create({
   },
   formContainer: {
     width: '100%',
-    maxWidth: 400,
     borderRadius: 20,
     padding: 24,
     borderWidth: 1,

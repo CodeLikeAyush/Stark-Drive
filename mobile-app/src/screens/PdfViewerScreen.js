@@ -1,5 +1,5 @@
 import React, { useContext, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Pdf from 'react-native-pdf';
@@ -7,10 +7,9 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ThemeContext } from '../theme/ThemeContext';
 
-const { width } = Dimensions.get('window');
-
 export default function PdfViewerScreen({ route, navigation }) {
   const { pdfUri, fileName } = route.params;
+  const { width: windowWidth } = useWindowDimensions();
   const { theme, isDark } = useContext(ThemeContext);
   const [loading, setLoading] = useState(true);
   const [totalPages, setTotalPages] = useState(0);
@@ -66,6 +65,7 @@ export default function PdfViewerScreen({ route, navigation }) {
         ) : (
           <Pdf
             source={{ uri: pdfUri }}
+            fitPolicy={0}
             onLoadProgress={() => setLoading(true)}
             onLoadComplete={(numberOfPages) => {
               setLoading(false);
@@ -82,6 +82,7 @@ export default function PdfViewerScreen({ route, navigation }) {
             style={[
               styles.pdf, 
               { 
+                width: windowWidth,
                 backgroundColor: isDark ? '#121212' : '#F2F2F7' 
               }
             ]}
@@ -144,7 +145,6 @@ const styles = StyleSheet.create({
   },
   pdf: {
     flex: 1,
-    width: width,
   },
   loadingContainer: {
     ...StyleSheet.absoluteFillObject,

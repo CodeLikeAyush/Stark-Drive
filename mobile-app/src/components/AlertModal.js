@@ -1,10 +1,8 @@
 import React, { useContext } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity } from 'react-native';
 import { ThemeContext } from '../theme/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-
-const { width } = Dimensions.get('window');
 
 export default function AlertModal({
   visible,
@@ -57,7 +55,8 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   dialogContainer: {
-    width: Math.min(width - 48, 340),
+    width: '90%',
+    maxWidth: 340,
     borderRadius: 20,
     padding: 24,
     borderWidth: 1,

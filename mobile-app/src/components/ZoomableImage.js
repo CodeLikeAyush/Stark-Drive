@@ -1,9 +1,14 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Image, PanResponder, Animated, Dimensions, StyleSheet, Pressable } from 'react-native';
-
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+import { View, Image, PanResponder, Animated, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
 
 export default function ZoomableImage({ source, onTap, onZoomStateChange, style, ...props }) {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const dimensionsRef = useRef({ width: windowWidth, height: windowHeight });
+  
+  useEffect(() => {
+    dimensionsRef.current = { width: windowWidth, height: windowHeight };
+  }, [windowWidth, windowHeight]);
+
   const scale = useRef(new Animated.Value(1)).current;
   const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   
@@ -140,8 +145,8 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style,
           
           if (gestureState.numberActiveTouches === 1 && scaleVal.current > 1.1) {
             const currentScale = scaleVal.current;
-            const maxTx = (screenWidth * (currentScale - 1)) / 2;
-            const maxTy = (screenHeight * (currentScale - 1)) / 2;
+            const maxTx = (dimensionsRef.current.width * (currentScale - 1)) / 2;
+            const maxTy = (dimensionsRef.current.height * (currentScale - 1)) / 2;
             
             let nextX = initialTranslate.current.x + gestureState.dx;
             let nextY = initialTranslate.current.y + gestureState.dy;
@@ -166,8 +171,8 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style,
           reset(true);
         } else {
           const currentScale = scaleVal.current;
-          const maxTx = (screenWidth * (currentScale - 1)) / 2;
-          const maxTy = (screenHeight * (currentScale - 1)) / 2;
+          const maxTx = (dimensionsRef.current.width * (currentScale - 1)) / 2;
+          const maxTy = (dimensionsRef.current.height * (currentScale - 1)) / 2;
           
           let targetX = translateVal.current.x;
           let targetY = translateVal.current.y;
@@ -197,8 +202,8 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style,
   ).current;
 
   return (
-    <Pressable style={styles.container} onPress={handlePress}>
-      <View style={styles.container} {...panResponder.panHandlers}>
+    <Pressable style={[styles.container, { width: windowWidth }]} onPress={handlePress}>
+      <View style={[styles.container, { width: windowWidth }]} {...panResponder.panHandlers}>
         <Animated.Image
           source={source}
           style={[
@@ -221,7 +226,6 @@ export default function ZoomableImage({ source, onTap, onZoomStateChange, style,
 
 const styles = StyleSheet.create({
   container: {
-    width: screenWidth,
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',

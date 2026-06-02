@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { ThemeContext } from '../theme/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
 import { useMediaBackup } from '../hooks/useMediaBackup';
@@ -7,15 +7,15 @@ import { Ionicons } from '@expo/vector-icons';
 import client from '../api/client';
 import ConfirmModal from '../components/ConfirmModal';
 
-const { width } = Dimensions.get('window');
-const COLUMN_COUNT = width > 768 ? 5 : 3;
-const IMAGE_SIZE = width / COLUMN_COUNT;
-
 export default function BinScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
   const { userToken } = useContext(AuthContext);
   const { restorePhotos, permanentlyDeletePhotos } = useMediaBackup();
   
+  const { width, height } = useWindowDimensions();
+  const columnCount = width > 1200 ? 8 : width > 768 ? 5 : 3;
+  const imageSize = width / columnCount;
+
   const [binPhotos, setBinPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedPhotos, setSelectedPhotos] = useState(new Set());
@@ -80,7 +80,7 @@ export default function BinScreen({ navigation }) {
     
     return (
       <TouchableOpacity 
-        style={[styles.imageContainer, { backgroundColor: theme.background }]}
+        style={[styles.imageContainer, { width: imageSize, height: imageSize, backgroundColor: theme.background }]}
         onLongPress={() => toggleSelection(item.id)}
         onPress={() => {
           if (isSelectionMode) toggleSelection(item.id);
@@ -140,9 +140,10 @@ export default function BinScreen({ navigation }) {
         </View>
       ) : (
         <FlatList
+          key={`bin-${columnCount}`}
           data={binPhotos}
           keyExtractor={item => item.id.toString()}
-          numColumns={COLUMN_COUNT}
+          numColumns={columnCount}
           renderItem={renderItem}
         />
       )}
@@ -185,8 +186,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   imageContainer: {
-    width: IMAGE_SIZE,
-    height: IMAGE_SIZE,
     padding: 1,
   },
   imageMock: {

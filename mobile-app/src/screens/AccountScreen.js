@@ -1,5 +1,5 @@
 import React, { useContext, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, ActivityIndicator, Switch, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, ActivityIndicator, Switch, ScrollView, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import * as SecureStore from 'expo-secure-store';
 
-export default function ProfileScreen() {
+export default function AccountScreen() {
   const { logout, userEmail, userName, updateUserName, autoBackupEnabled, setAutoBackupEnabled, disconnectServer } = useContext(AuthContext);
   const { theme, themeMode, setThemeMode } = useContext(ThemeContext);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -74,34 +74,50 @@ export default function ProfileScreen() {
     </TouchableOpacity>
   );
 
-  return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
-      <ScrollView contentContainerStyle={styles.tabletWrapper}>
-      <View style={[styles.section, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-        <View style={styles.profileHeader}>
-          <View style={[styles.avatar, { backgroundColor: theme.primary }]}>
-            <Text style={{ color: '#fff', fontSize: 32, fontWeight: 'bold' }}>{displayName.charAt(0).toUpperCase()}</Text>
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isTwoColumn = windowWidth > windowHeight || windowWidth >= 600;
+
+  const sectionStyle = [
+    styles.section,
+    { backgroundColor: theme.surface, borderColor: theme.border },
+    isTwoColumn && { marginHorizontal: 0, marginBottom: 16 }
+  ];
+
+  const sectionTitleStyle = [
+    styles.sectionTitle,
+    { color: theme.textSecondary },
+    isTwoColumn && { marginLeft: 16 }
+  ];
+
+  const renderProfileHeader = () => (
+    <View style={sectionStyle}>
+      <View style={styles.profileHeader}>
+        <View style={[styles.avatar, { backgroundColor: theme.primary }]}>
+          <Text style={{ color: '#fff', fontSize: 32, fontWeight: 'bold' }}>{displayName.charAt(0).toUpperCase()}</Text>
+        </View>
+        <View style={{ alignItems: 'center' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>{displayName}</Text>
+            <TouchableOpacity 
+              onPress={() => {
+                setEditNameInput(userName || '');
+                setShowEditNameModal(true);
+              }} 
+              style={{ marginLeft: 8, padding: 4, backgroundColor: theme.background, borderRadius: 12 }}
+            >
+              <Ionicons name="pencil" size={16} color={theme.primary} />
+            </TouchableOpacity>
           </View>
-          <View style={{ alignItems: 'center' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={[styles.name, { color: theme.text }]} numberOfLines={1}>{displayName}</Text>
-              <TouchableOpacity 
-                onPress={() => {
-                  setEditNameInput(userName || '');
-                  setShowEditNameModal(true);
-                }} 
-                style={{ marginLeft: 8, padding: 4, backgroundColor: theme.background, borderRadius: 12 }}
-              >
-                <Ionicons name="pencil" size={16} color={theme.primary} />
-              </TouchableOpacity>
-            </View>
-            <Text style={[styles.email, { color: theme.textSecondary }]} numberOfLines={1}>{userEmail}</Text>
-          </View>
+          <Text style={[styles.email, { color: theme.textSecondary }]} numberOfLines={1}>{userEmail}</Text>
         </View>
       </View>
+    </View>
+  );
 
-      <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>APPEARANCE</Text>
-      <View style={[styles.section, { backgroundColor: theme.surface, borderColor: theme.border, padding: 16 }]}>
+  const renderSettingsContent = () => (
+    <>
+      <Text style={sectionTitleStyle}>APPEARANCE</Text>
+      <View style={[styles.section, { backgroundColor: theme.surface, borderColor: theme.border, padding: 16 }, isTwoColumn && { marginHorizontal: 0, marginBottom: 16 }]}>
         <View style={styles.themeSelector}>
           <ThemeOption mode="light" label="Light" icon="sunny" />
           <ThemeOption mode="dark" label="Dark" icon="moon" />
@@ -109,8 +125,8 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>ACCOUNT</Text>
-      <View style={[styles.section, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <Text style={sectionTitleStyle}>ACCOUNT</Text>
+      <View style={sectionStyle}>
         <TouchableOpacity style={[styles.row, { borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Ionicons name="cloud-outline" size={22} color={theme.primary} style={{ marginRight: 12 }} />
@@ -122,8 +138,7 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </View>
 
-
-      <View style={[styles.section, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      <View style={sectionStyle}>
         <TouchableOpacity style={styles.row} onPress={() => setShowLogoutModal(true)}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Ionicons name="log-out-outline" size={22} color={theme.destructive} style={{ marginRight: 12 }} />
@@ -131,6 +146,27 @@ export default function ProfileScreen() {
           </View>
         </TouchableOpacity>
       </View>
+    </>
+  );
+
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+      <ScrollView contentContainerStyle={styles.tabletWrapper}>
+        {isTwoColumn ? (
+          <View style={styles.twoColumnContainer}>
+            <View style={styles.leftColumn}>
+              {renderProfileHeader()}
+            </View>
+            <View style={styles.rightColumn}>
+              {renderSettingsContent()}
+            </View>
+          </View>
+        ) : (
+          <>
+            {renderProfileHeader()}
+            {renderSettingsContent()}
+          </>
+        )}
 
       <Modal visible={showLogoutModal} transparent animationType="fade">
         <BlurView intensity={30} tint={themeMode === 'dark' ? 'dark' : 'light'} style={styles.modalOverlay}>
@@ -259,7 +295,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalContent: {
-    width: '80%',
+    width: '90%',
+    maxWidth: 340,
     borderRadius: 14,
     borderWidth: 1,
     alignItems: 'center',
@@ -297,5 +334,18 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 20,
     fontSize: 16,
+  },
+  twoColumnContainer: {
+    flexDirection: 'row',
+    gap: 16,
+    paddingHorizontal: 16,
+    marginTop: 16,
+    alignItems: 'flex-start',
+  },
+  leftColumn: {
+    flex: 4,
+  },
+  rightColumn: {
+    flex: 6,
   }
 });

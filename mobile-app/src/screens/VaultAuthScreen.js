@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, AppState } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, AppState, ScrollView, useWindowDimensions, Platform } from 'react-native';
 import { ThemeContext } from '../theme/ThemeContext';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -24,6 +24,9 @@ export default function VaultAuthScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const inputRef = useRef(null);
 
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height && width > 550;
+
   const getSafePinKey = () => {
     const safeEmail = userEmail ? userEmail.replace(/[^a-zA-Z0-9.\-_]/g, '_') : 'default';
     return `${VAULT_PIN_KEY_PREFIX}${safeEmail}`;
@@ -33,8 +36,6 @@ export default function VaultAuthScreen({ navigation }) {
     let appStateSubscription;
 
     const checkAndPrompt = async () => {
-      // If we don't have focus or app isn't active, we shouldn't show biometrics.
-      // But we DO need to stop the loading spinner if we just need them to create a PIN.
       try {
         const pinKey = getSafePinKey();
         const storedPin = await SecureStore.getItemAsync(pinKey);
@@ -47,12 +48,10 @@ export default function VaultAuthScreen({ navigation }) {
 
         setIsSettingUp(false);
 
-        // We have a stored PIN. Should we prompt biometrics?
         if (AppState.currentState === 'active' && isFocused && !hasPrompted.current) {
           hasPrompted.current = true;
           promptBiometrics(storedPin);
         } else if (hasPrompted.current) {
-          // We already prompted (maybe they cancelled), just show PIN pad
           setLoading(false);
         }
       } catch (e) {
@@ -67,7 +66,6 @@ export default function VaultAuthScreen({ navigation }) {
       if (nextAppState === 'active') {
         checkAndPrompt();
       } else {
-        // App went to background/locked. Reset the prompt flag so we ask again on return.
         hasPrompted.current = false;
       }
     });
@@ -87,11 +85,10 @@ export default function VaultAuthScreen({ navigation }) {
           promptMessage: 'Unlock Secure Vault',
           fallbackLabel: 'Use PIN',
           cancelLabel: 'Cancel',
-          disableDeviceFallback: true, // Force use of our own PIN system if biometrics fail
+          disableDeviceFallback: true,
         });
 
         if (result.success) {
-          // Unlocked via biometrics! We can use the stored PIN.
           navigation.replace('VaultScreen', { vaultPin: storedPin });
           return;
         }
@@ -99,7 +96,6 @@ export default function VaultAuthScreen({ navigation }) {
     } catch (e) {
       console.warn("Biometrics error", e);
     }
-    // If biometrics fail, are cancelled, or unavailable, just stop loading and let them type the PIN
     setLoading(false);
     setTimeout(() => {
       if (inputRef.current) {
@@ -126,12 +122,10 @@ export default function VaultAuthScreen({ navigation }) {
           setConfirmPin('');
           return;
         }
-        // Save the new PIN securely
         try {
           const pinKey = getSafePinKey();
           await SecureStore.setItemAsync(pinKey, pin);
 
-          // Inform server
           try {
             await client.put('/auth/vault-setup');
             setHasVaultSetup(true);
@@ -146,7 +140,6 @@ export default function VaultAuthScreen({ navigation }) {
         return;
       }
     } else {
-      // Entering PIN (either existing device or new device restore)
       if (pin.length < 4) {
         setError('PIN must be at least 6 digits');
         return;
@@ -163,7 +156,6 @@ export default function VaultAuthScreen({ navigation }) {
             setPin('');
           }
         } else {
-          // NEW DEVICE RESTORE
           await SecureStore.setItemAsync(pinKey, pin);
           navigation.replace('VaultScreen', { vaultPin: pin });
         }
@@ -175,7 +167,7 @@ export default function VaultAuthScreen({ navigation }) {
 
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: theme.background, justifyContent: 'center' }]}>
+      <View style={[styles.container, { backgroundColor: theme.background, justifyContent: 'center', paddingTop: 0 }]}>
         <ActivityIndicator size="large" color={theme.primary} />
       </View>
     );
@@ -192,78 +184,88 @@ export default function VaultAuthScreen({ navigation }) {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <MaterialCommunityIcons name="safe" size={80} color={theme.primary} style={{ marginBottom: 20 }} />
-      <Text style={[styles.title, { color: theme.text }]}>Secure Vault</Text>
-      <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-        {isSettingUp
-          ? (step === 'ENTER' ? "Create a Master PIN to encrypt your files." : "Confirm your Master PIN.")
-          : (hasVaultSetup && !loading) ? "Enter your existing Vault PIN to restore access." : "Enter your PIN to unlock the vault."}
-      </Text>
-
-      <View style={styles.pinContainer}>
-        {[0, 1, 2, 3, 4, 5].map((index) => {
-          const value = (step === 'ENTER' || !isSettingUp) ? pin : confirmPin;
-          const isFocused = value.length === index;
-          return (
-            <TouchableOpacity
-              key={index}
-              activeOpacity={1}
-              onPress={handlePinBoxPress}
-              style={[
-                styles.pinBox,
-                { backgroundColor: theme.surface, borderColor: isFocused ? theme.primary : theme.border }
-              ]}
-            >
-              <Text style={[styles.pinDigit, { color: theme.text }]}>
-                {value[index] ? '•' : ''}
+      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+        <View style={styles.content}>
+          <View style={isLandscape ? styles.landscapeContainer : styles.portraitContainer}>
+            <View style={isLandscape ? styles.landscapeLeft : styles.portraitHeader}>
+              <MaterialCommunityIcons name="safe" size={80} color={theme.primary} style={{ marginBottom: 20 }} />
+              <Text style={[styles.title, { color: theme.text }]}>Secure Vault</Text>
+              <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+                {isSettingUp
+                  ? (step === 'ENTER' ? "Create a Master PIN to encrypt your files." : "Confirm your Master PIN.")
+                  : (hasVaultSetup && !loading) ? "Enter your existing Vault PIN to restore access." : "Enter your PIN to unlock the vault."}
               </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+            </View>
 
-      <TextInput
-        ref={inputRef}
-        style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }}
-        value={(step === 'ENTER' || !isSettingUp) ? pin : confirmPin}
-        onChangeText={(text) => {
-          if (step === 'ENTER' || !isSettingUp) setPin(text);
-          else setConfirmPin(text);
-        }}
-        keyboardType="numeric"
-        maxLength={6}
-        autoFocus
-      />
+            <View style={isLandscape ? styles.landscapeRight : styles.portraitForm}>
+              <View style={styles.pinContainer}>
+                {[0, 1, 2, 3, 4, 5].map((index) => {
+                  const value = (step === 'ENTER' || !isSettingUp) ? pin : confirmPin;
+                  const isFocused = value.length === index;
+                  return (
+                    <TouchableOpacity
+                      key={index}
+                      activeOpacity={1}
+                      onPress={handlePinBoxPress}
+                      style={[
+                        styles.pinBox,
+                        { backgroundColor: theme.surface, borderColor: isFocused ? theme.primary : theme.border }
+                      ]}
+                    >
+                      <Text style={[styles.pinDigit, { color: theme.text }]}>
+                        {value[index] ? '•' : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+              <TextInput
+                ref={inputRef}
+                style={{ position: 'absolute', opacity: 0, width: 1, height: 1 }}
+                value={(step === 'ENTER' || !isSettingUp) ? pin : confirmPin}
+                onChangeText={(text) => {
+                  if (step === 'ENTER' || !isSettingUp) setPin(text);
+                  else setConfirmPin(text);
+                }}
+                keyboardType="numeric"
+                maxLength={6}
+                autoFocus
+              />
 
-      <View style={{ width: '100%', alignItems: 'center', marginTop: 10 }}>
-        <TouchableOpacity style={[styles.button, { backgroundColor: theme.primary, width: '100%' }]} onPress={handlePinSubmit}>
-          <Text style={styles.buttonText}>
-            {isSettingUp ? (step === 'ENTER' ? "Continue" : "Create PIN") : "Unlock"}
-          </Text>
-        </TouchableOpacity>
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-        {!isSettingUp && (
-          <TouchableOpacity
-            style={{ marginTop: 24, padding: 10, alignItems: 'center' }}
-            onPress={async () => {
-              const pinKey = getSafePinKey();
-              const storedPin = await SecureStore.getItemAsync(pinKey);
-              if (storedPin) promptBiometrics(storedPin);
-            }}
-          >
-            <MaterialCommunityIcons name="fingerprint" size={48} color={theme.primary} />
-            <Text style={{ color: theme.textSecondary, marginTop: 8, fontSize: 14 }}>Unlock with Biometrics</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+              <View style={{ width: '100%', alignItems: 'center', marginTop: 10 }}>
+                <TouchableOpacity style={[styles.button, { backgroundColor: theme.primary, width: '100%' }]} onPress={handlePinSubmit}>
+                  <Text style={styles.buttonText}>
+                    {isSettingUp ? (step === 'ENTER' ? "Continue" : "Create PIN") : "Unlock"}
+                  </Text>
+                </TouchableOpacity>
 
-      {isSettingUp && step === 'CONFIRM' && (
-        <TouchableOpacity style={{ marginTop: 20 }} onPress={() => { setStep('ENTER'); setConfirmPin(''); setPin(''); }}>
-          <Text style={{ color: theme.textSecondary }}>Start Over</Text>
-        </TouchableOpacity>
-      )}
+                {!isSettingUp && (
+                  <TouchableOpacity
+                    style={{ marginTop: 20, padding: 10, alignItems: 'center' }}
+                    onPress={async () => {
+                      const pinKey = getSafePinKey();
+                      const storedPin = await SecureStore.getItemAsync(pinKey);
+                      if (storedPin) promptBiometrics(storedPin);
+                    }}
+                  >
+                    <MaterialCommunityIcons name="fingerprint" size={44} color={theme.primary} />
+                    <Text style={{ color: theme.textSecondary, marginTop: 4, fontSize: 13 }}>Unlock with Biometrics</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {isSettingUp && step === 'CONFIRM' && (
+                <TouchableOpacity style={{ marginTop: 20, alignItems: 'center' }} onPress={() => { setStep('ENTER'); setConfirmPin(''); setPin(''); }}>
+                  <Text style={{ color: theme.textSecondary }}>Start Over</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </ScrollView>
     </View>
   );
 }
@@ -271,14 +273,53 @@ export default function VaultAuthScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  scrollContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 100,
-    paddingHorizontal: 20,
+    padding: 24,
+  },
+  landscapeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 900,
+  },
+  landscapeLeft: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 48,
+  },
+  landscapeRight: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 400,
+    justifyContent: 'center',
+  },
+  portraitContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  portraitHeader: {
+    alignItems: 'center',
+  },
+  portraitForm: {
+    width: '100%',
+    maxWidth: 400,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     marginBottom: 8,
+    textAlign: 'center',
   },
   subtitle: {
     fontSize: 16,
@@ -320,5 +361,6 @@ const styles = StyleSheet.create({
     color: '#ff3b30',
     marginBottom: 20,
     fontSize: 14,
+    textAlign: 'center',
   },
 });

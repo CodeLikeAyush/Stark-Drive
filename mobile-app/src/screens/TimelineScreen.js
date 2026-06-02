@@ -1,5 +1,5 @@
 import React, { useContext, useMemo, useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Dimensions, Image, TouchableOpacity, ActivityIndicator, Modal, Switch, FlatList, PanResponder, Animated, Alert } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ActivityIndicator, Modal, Switch, FlatList, PanResponder, Animated, Alert, useWindowDimensions } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { FlashList } from '@shopify/flash-list';
 import { ThemeContext } from '../theme/ThemeContext';
@@ -13,14 +13,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import ConfirmModal from '../components/ConfirmModal';
 import ZoomableImage from '../components/ZoomableImage';
 
-const { width } = Dimensions.get('window');
-const COLUMN_COUNT = width > 768 ? 5 : 3;
-const IMAGE_SIZE = width / COLUMN_COUNT;
-
 export default function TimelineScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
   const { photos, loading, errorMsg, getSyncedLocalAssets, executeCleanup, refresh, trashPhotos } = useMediaBackup();
   const { autoBackupEnabled, setAutoBackupEnabled, backupAlbums, setBackupAlbums } = useContext(AuthContext);
+
+  const { width, height } = useWindowDimensions();
+  const columnCount = width > 1200 ? 8 : width > 768 ? 5 : 3;
+  const imageSize = width / columnCount;
 
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [assetsToClean, setAssetsToClean] = useState([]);
@@ -490,7 +490,7 @@ export default function TimelineScreen({ navigation }) {
 
     return (
       <TouchableOpacity
-        style={[styles.imageContainer, { backgroundColor: theme.background }]}
+        style={[styles.imageContainer, { width: imageSize, height: imageSize, backgroundColor: theme.background }]}
         onLongPress={() => {
           if (!isSelectionMode) toggleSelection(item.id);
         }}
@@ -798,11 +798,12 @@ export default function TimelineScreen({ navigation }) {
         <View style={{ flex: 1 }}>
           <FlashList
             ref={flashListRef}
+            key={`timeline-${columnCount}`}
             data={data}
             renderItem={renderItem}
-            estimatedItemSize={IMAGE_SIZE}
+            estimatedItemSize={imageSize}
             getItemType={(item) => item.type}
-            numColumns={COLUMN_COUNT}
+            numColumns={columnCount}
             onLayout={(e) => { containerHeight.current = e.nativeEvent.layout.height; }}
             onContentSizeChange={(w, h) => { contentHeight.current = h; }}
             showsVerticalScrollIndicator={false}
@@ -820,11 +821,11 @@ export default function TimelineScreen({ navigation }) {
             }}
             overrideItemLayout={(layout, item) => {
               if (item.type === 'header') {
-                layout.span = COLUMN_COUNT;
+                layout.span = columnCount;
                 layout.size = 50; // height of header
               } else {
                 layout.span = 1;
-                layout.size = IMAGE_SIZE;
+                layout.size = imageSize;
               }
             }}
           />
@@ -992,8 +993,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   imageContainer: {
-    width: IMAGE_SIZE,
-    height: IMAGE_SIZE,
     padding: 1,
   },
   imageMock: {
@@ -1090,6 +1089,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   fullScreenModalContent: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     height: '80%',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,

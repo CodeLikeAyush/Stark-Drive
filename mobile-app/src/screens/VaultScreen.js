@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform, Dimensions, PanResponder, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform, PanResponder, Animated, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
@@ -16,12 +16,26 @@ import client from '../api/client';
 import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles } from '../db/Database';
 import ConfirmModal from '../components/ConfirmModal';
 
-const { width } = Dimensions.get('window');
+
 
 export default function VaultScreen({ route, navigation }) {
   const { vaultPin } = route.params;
   const { theme, isDark } = useContext(ThemeContext);
   const { userToken, isOfflineMode } = useContext(AuthContext);
+
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
+  let numColumns = 1;
+  if (width > 1024) {
+    numColumns = isLandscape ? 4 : 2;
+  } else if (width > 768) {
+    numColumns = isLandscape ? 3 : 2;
+  } else if (width > 480) {
+    numColumns = isLandscape ? 3 : 2;
+  } else {
+    numColumns = isLandscape ? 2 : 1;
+  }
 
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -420,7 +434,15 @@ export default function VaultScreen({ route, navigation }) {
 
   const renderItem = ({ item }) => (
     <TouchableOpacity
-      style={[styles.fileItem, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}
+      style={[
+        styles.fileItem,
+        { 
+          backgroundColor: theme.surface, 
+          borderBottomColor: theme.border,
+          flex: numColumns > 1 ? 1 : undefined,
+          marginHorizontal: numColumns > 1 ? 8 : 0,
+        }
+      ]}
       onPress={() => handleFilePress(item)}
       onLongPress={() => handleLongPress(item)}
     >
@@ -450,15 +472,17 @@ export default function VaultScreen({ route, navigation }) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
-      <View style={styles.tabletWrapper}>
+      <View style={[styles.tabletWrapper, { maxWidth: numColumns > 1 ? 1200 : 700 }]}>
         {loading ? (
           <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
         ) : (
           <FlashList
+            key={`vault-${numColumns}`}
             data={files}
             keyExtractor={item => item.id.toString()}
             renderItem={renderItem}
             estimatedItemSize={70}
+            numColumns={numColumns}
             contentContainerStyle={{ padding: 16 }}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
@@ -645,7 +669,8 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   dialogContainer: {
-    width: Math.min(width - 48, 340),
+    width: '90%',
+    maxWidth: 340,
     borderRadius: 20,
     padding: 24,
     borderWidth: 1,
@@ -695,6 +720,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   bottomSheet: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 24,

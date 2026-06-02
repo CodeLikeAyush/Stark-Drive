@@ -10,7 +10,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 import LoginScreen from '../screens/LoginScreen';
 import DriveScreen from '../screens/DriveScreen';
-import ProfileScreen from '../screens/ProfileScreen';
+import AccountScreen from '../screens/AccountScreen';
 import TimelineScreen from '../screens/TimelineScreen';
 import VaultAuthScreen from '../screens/VaultAuthScreen';
 import VaultScreen from '../screens/VaultScreen';
@@ -45,7 +45,7 @@ function MainTabs() {
             iconName = focused ? 'images' : 'images-outline';
           } else if (route.name === 'DriveTab') {
             iconName = focused ? 'folder' : 'folder-outline';
-          } else if (route.name === 'ProfileTab') {
+          } else if (route.name === 'AccountTab') {
             iconName = focused ? 'person' : 'person-outline';
           }
 
@@ -73,9 +73,9 @@ function MainTabs() {
         options={{ title: 'Vault' }}
       />
       <Tab.Screen
-        name="ProfileTab"
-        component={ProfileScreen}
-        options={{ title: 'Profile', headerShown: false }}
+        name="AccountTab"
+        component={AccountScreen}
+        options={{ title: 'Account', headerShown: false }}
       />
     </Tab.Navigator>
     <OfflineBand />

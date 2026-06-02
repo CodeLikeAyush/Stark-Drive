@@ -79,8 +79,9 @@ const styles = StyleSheet.create({
   container: {
     position: 'absolute',
     bottom: 65,
-    left: 16,
-    right: 16,
+    width: '90%',
+    maxWidth: 450,
+    alignSelf: 'center',
     borderRadius: 8,
     backgroundColor: '#333',
     flexDirection: 'row',

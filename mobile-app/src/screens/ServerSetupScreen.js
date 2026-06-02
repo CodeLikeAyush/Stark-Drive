@@ -1,12 +1,10 @@
 import React, { useState, useContext, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, Dimensions } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, useWindowDimensions } from 'react-native';
 import { ThemeContext } from '../theme/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import * as Network from 'expo-network';
 import AlertModal from '../components/AlertModal';
-
-const { width } = Dimensions.get('window');
 
 export default function ServerSetupScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
@@ -15,6 +13,9 @@ export default function ServerSetupScreen({ navigation }) {
   const [ipAddress, setIpAddress] = useState('');
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height && width > 550;
 
   // Alert State
   const [alertVisible, setAlertVisible] = useState(false);
@@ -153,62 +154,70 @@ export default function ServerSetupScreen({ navigation }) {
       style={[styles.container, { backgroundColor: theme.background }]} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.content}>
-        {serverUrl && navigation && navigation.canGoBack() && (
-          <TouchableOpacity 
-            style={{ position: 'absolute', top: 60, left: 24, zIndex: 10 }} 
-            onPress={() => navigation.goBack()}
-          >
-            <Ionicons name="arrow-back" size={28} color={theme.text} />
-          </TouchableOpacity>
-        )}
-        <View style={styles.iconContainer}>
-          <Ionicons name="server" size={64} color={theme.primary} />
-        </View>
-        <Text style={[styles.title, { color: theme.text }]}>Stark Drive</Text>
-        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Connect to your self-hosted server.</Text>
+      {serverUrl && navigation && navigation.canGoBack() && (
+        <TouchableOpacity 
+          style={{ position: 'absolute', top: Platform.OS === 'ios' ? 60 : 30, left: 24, zIndex: 10 }} 
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={28} color={theme.text} />
+        </TouchableOpacity>
+      )}
+      <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
+        <View style={styles.content}>
+          <View style={isLandscape ? styles.landscapeContainer : styles.portraitContainer}>
+            <View style={isLandscape ? styles.landscapeLeft : styles.portraitHeader}>
+              <View style={styles.iconContainer}>
+                <Ionicons name="server" size={64} color={theme.primary} />
+              </View>
+              <Text style={[styles.title, { color: theme.text }]}>Stark Drive</Text>
+              <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Connect to your self-hosted server.</Text>
+            </View>
 
-        {isDiscovering ? (
-          <View style={styles.discoveringBox}>
-            <ActivityIndicator size="large" color={theme.primary} />
-            <Text style={[styles.discoveringText, { color: theme.textSecondary }]}>Scanning local network for server...</Text>
-          </View>
-        ) : (
-          <View style={[styles.formContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.formTitle, { color: theme.text }]}>Manual Connection</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
-              placeholder="e.g. 192.168.1.50"
-              placeholderTextColor={theme.textSecondary}
-              value={ipAddress}
-              onChangeText={setIpAddress}
-              autoCapitalize="none"
-              keyboardType="numeric"
-              autoCorrect={false}
-            />
-            
-            <TouchableOpacity 
-              style={[styles.button, { backgroundColor: theme.primary }]} 
-              onPress={handleManualConnect}
-              disabled={isConnecting}
-            >
-              {isConnecting ? (
-                <ActivityIndicator color="#fff" />
+            <View style={isLandscape ? styles.landscapeRight : styles.portraitForm}>
+              {isDiscovering ? (
+                <View style={styles.discoveringBox}>
+                  <ActivityIndicator size="large" color={theme.primary} />
+                  <Text style={[styles.discoveringText, { color: theme.textSecondary }]}>Scanning local network for server...</Text>
+                </View>
               ) : (
-                <Text style={styles.buttonText}>Connect</Text>
-              )}
-            </TouchableOpacity>
+                <View style={[styles.formContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                  <Text style={[styles.formTitle, { color: theme.text }]}>Manual Connection</Text>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: theme.background, color: theme.text, borderColor: theme.border }]}
+                    placeholder="e.g. 192.168.1.50"
+                    placeholderTextColor={theme.textSecondary}
+                    value={ipAddress}
+                    onChangeText={setIpAddress}
+                    autoCapitalize="none"
+                    keyboardType="numeric"
+                    autoCorrect={false}
+                  />
+                  
+                  <TouchableOpacity 
+                    style={[styles.button, { backgroundColor: theme.primary }]} 
+                    onPress={handleManualConnect}
+                    disabled={isConnecting}
+                  >
+                    {isConnecting ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.buttonText}>Connect</Text>
+                    )}
+                  </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.outlineButton, { borderColor: theme.primary }]} 
-              onPress={discoverServer}
-            >
-              <Ionicons name="search" size={18} color={theme.primary} style={{ marginRight: 8 }} />
-              <Text style={[styles.outlineButtonText, { color: theme.primary }]}>Scan Network Again</Text>
-            </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.outlineButton, { borderColor: theme.primary }]} 
+                    onPress={discoverServer}
+                  >
+                    <Ionicons name="search" size={18} color={theme.primary} style={{ marginRight: 8 }} />
+                    <Text style={[styles.outlineButtonText, { color: theme.primary }]}>Scan Network Again</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
           </View>
-        )}
-      </View>
+        </View>
+      </ScrollView>
 
       <AlertModal 
         visible={alertVisible}
@@ -225,11 +234,45 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  scrollContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   content: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+  },
+  landscapeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 900,
+  },
+  landscapeLeft: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 48,
+  },
+  landscapeRight: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 400,
+  },
+  portraitContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  portraitHeader: {
+    alignItems: 'center',
+  },
+  portraitForm: {
+    width: '100%',
+    maxWidth: 400,
   },
   iconContainer: {
     width: 120,
@@ -257,10 +300,10 @@ const styles = StyleSheet.create({
   discoveringText: {
     marginTop: 16,
     fontSize: 16,
+    textAlign: 'center',
   },
   formContainer: {
     width: '100%',
-    maxWidth: 400,
     borderRadius: 20,
     padding: 24,
     borderWidth: 1,
