@@ -1,12 +1,12 @@
 import React, { useContext, useMemo, useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ActivityIndicator, Modal, Switch, FlatList, PanResponder, Animated, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ActivityIndicator, Modal, Switch, FlatList, PanResponder, Animated, Alert, useWindowDimensions, TextInput } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { FlashList } from '@shopify/flash-list';
 import { ThemeContext } from '../theme/ThemeContext';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMediaBackup } from '../hooks/useMediaBackup';
 import { AuthContext } from '../context/AuthContext';
-import { getPhotos, upsertPhotoCache, markPhotoAvailableOffline, markPhotoNotAvailableOffline } from '../db/Database';
+import { getPhotos, upsertPhotoCache, markPhotoAvailableOffline, markPhotoNotAvailableOffline, getCachedAlbums, upsertAlbumCache, upsertAlbumPhotosCache } from '../db/Database';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -16,10 +16,10 @@ import VaultPinModal from '../components/VaultPinModal';
 import { encryptFileAsync } from '../utils/crypto';
 import client from '../api/client';
 
-export default function TimelineScreen({ navigation }) {
+export default function TimelineScreen({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { photos, loading, errorMsg, getSyncedLocalAssets, executeCleanup, refresh, trashPhotos } = useMediaBackup();
-  const { autoBackupEnabled, setAutoBackupEnabled, backupAlbums, setBackupAlbums, hasVaultSetup, userToken } = useContext(AuthContext);
+  const { autoBackupEnabled, setAutoBackupEnabled, backupAlbums, setBackupAlbums, hasVaultSetup, userToken, isOfflineMode } = useContext(AuthContext);
 
   const { width, height } = useWindowDimensions();
   const columnCount = width > 1200 ? 8 : width > 768 ? 5 : 3;
@@ -30,6 +30,16 @@ export default function TimelineScreen({ navigation }) {
   const [isCleaning, setIsCleaning] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(null);
+
+  // Album states
+  const [albums, setAlbums] = useState([]);
+  const [showCreateAlbumModal, setShowCreateAlbumModal] = useState(false);
+  const [newAlbumName, setNewAlbumName] = useState('');
+  const [newAlbumDesc, setNewAlbumDesc] = useState('');
+  const [selectedForNewAlbum, setSelectedForNewAlbum] = useState(new Set());
+  const [isCreatingAlbum, setIsCreatingAlbum] = useState(false);
+  const [showAddToAlbumModal, setShowAddToAlbumModal] = useState(false);
+  const [photosToAddToAlbum, setPhotosToAddToAlbum] = useState([]);
 
   // Offline states
   const [offlinePhotos, setOfflinePhotos] = useState({});
@@ -64,12 +74,53 @@ export default function TimelineScreen({ navigation }) {
     }
   };
 
+  const fetchAlbums = async () => {
+    try {
+      const cached = await getCachedAlbums();
+      setAlbums(cached);
+    } catch (e) {
+      console.warn("Failed to load cached albums in timeline", e);
+    }
+
+    if (!isOfflineMode && userToken) {
+      try {
+        const res = await client.get('/albums');
+        const remoteAlbums = res.data || [];
+        setAlbums(remoteAlbums);
+        for (const a of remoteAlbums) {
+          await upsertAlbumCache(a);
+        }
+      } catch (e) {
+        console.warn("Failed to fetch albums on timeline start", e);
+      }
+    }
+  };
+
   useEffect(() => {
     refreshOfflineState();
+    fetchAlbums();
     FileSystem.getInfoAsync(OFFLINE_PHOTOS_DIR).then(dirInfo => {
       if (!dirInfo.exists) FileSystem.makeDirectoryAsync(OFFLINE_PHOTOS_DIR, { intermediates: true });
     });
-  }, []);
+  }, [isOfflineMode]);
+
+  useEffect(() => {
+    if (route.params?.openCreateAlbum) {
+      navigation.setParams({ openCreateAlbum: undefined });
+      if (isOfflineMode) {
+        setAlertData({
+          visible: true,
+          title: "Offline Mode",
+          message: "You are currently offline. Album creation requires an active internet connection."
+        });
+      } else {
+        setNewAlbumName('');
+        setNewAlbumDesc('');
+        setSelectedForNewAlbum(new Set());
+        setShowCreateAlbumModal(true);
+      }
+    }
+  }, [route.params?.openCreateAlbum, isOfflineMode]);
   // Fast Scroller State
   const flashListRef = useRef(null);
   const containerHeight = useRef(0);
@@ -92,6 +143,317 @@ export default function TimelineScreen({ navigation }) {
   const [isMovingToVault, setIsMovingToVault] = useState(false);
   const [photosToMove, setPhotosToMove] = useState([]);
   const [alertData, setAlertData] = useState({ visible: false, title: '', message: '', confirmText: 'OK', confirmStyle: 'default', onConfirm: null });
+
+  const handleSaveAlbum = async () => {
+    if (isOfflineMode) {
+      setAlertData({
+        visible: true,
+        title: "Offline Mode",
+        message: "You are currently offline. Album creation requires an active internet connection."
+      });
+      return;
+    }
+    if (!newAlbumName.trim()) {
+      setAlertData({
+        visible: true,
+        title: "Required",
+        message: "Please enter an album name."
+      });
+      return;
+    }
+    if (selectedForNewAlbum.size === 0) {
+      setAlertData({
+        visible: true,
+        title: "Required",
+        message: "Please select at least one photo."
+      });
+      return;
+    }
+
+    setIsCreatingAlbum(true);
+    try {
+      const selectedArr = Array.from(selectedForNewAlbum).map(id => photos.find(p => p.id === id)).filter(Boolean);
+      const finalPhotoIds = [];
+
+      for (const photo of selectedArr) {
+        let remoteId = photo.remoteFileId;
+        if (!remoteId) {
+          // Upload local photo first
+          let assetUri = photo.uri;
+          try {
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo.id);
+            assetUri = assetInfo.localUri || assetInfo.uri;
+          } catch (e) {}
+
+          const tempFileUri = `${FileSystem.cacheDirectory}${photo.filename}`;
+          await FileSystem.copyAsync({ from: assetUri, to: tempFileUri });
+
+          const uploadResult = await FileSystem.uploadAsync(
+            `${client.defaults.baseURL}/drive/upload`,
+            tempFileUri,
+            {
+              httpMethod: 'POST',
+              uploadType: 1, // MULTIPART
+              fieldName: 'file',
+              mimeType: 'image/jpeg',
+              parameters: {
+                originalName: photo.filename,
+                isBackup: 'true',
+                creationTime: photo.creationTime ? photo.creationTime.toString() : Date.now().toString()
+              },
+              headers: { Authorization: `Bearer ${userToken}` }
+            }
+          );
+
+          await FileSystem.deleteAsync(tempFileUri, { idempotent: true });
+
+          if (uploadResult.status === 200) {
+            const resData = JSON.parse(uploadResult.body);
+            remoteId = resData.id;
+          } else {
+            throw new Error(`Upload failed for ${photo.filename}`);
+          }
+        }
+        if (remoteId) finalPhotoIds.push(remoteId);
+      }
+
+      const res = await client.post('/albums', {
+        name: newAlbumName,
+        description: newAlbumDesc,
+        photoIds: finalPhotoIds
+      });
+
+      const newAlbum = res.data;
+      await upsertAlbumCache({
+        id: newAlbum.id,
+        name: newAlbum.name,
+        description: newAlbum.description,
+        coverPhotoId: finalPhotoIds.length > 0 ? finalPhotoIds[0] : null,
+        photoCount: finalPhotoIds.length,
+        creationTime: newAlbum.creationTime
+      });
+
+      await upsertAlbumPhotosCache(newAlbum.id, finalPhotoIds);
+      setShowCreateAlbumModal(false);
+      fetchAlbums();
+    } catch (e) {
+      console.error(e);
+      setAlertData({
+        visible: true,
+        title: "Error",
+        message: "Failed to create album: " + e.message
+      });
+    } finally {
+      setIsCreatingAlbum(false);
+    }
+  };
+
+  const toggleSelectForNewAlbum = (photoId) => {
+    setSelectedForNewAlbum(prev => {
+      const next = new Set(prev);
+      if (next.has(photoId)) next.delete(photoId);
+      else next.add(photoId);
+      return next;
+    });
+  };
+
+  const handleAddSinglePhotoToAlbum = (photo) => {
+    if (isOfflineMode) {
+      setAlertData({
+        visible: true,
+        title: "Offline Mode",
+        message: "You cannot add photos to albums while offline."
+      });
+      return;
+    }
+    setPhotosToAddToAlbum([photo]);
+    setShowAddToAlbumModal(true);
+  };
+
+  const handleBatchAddToAlbum = () => {
+    if (isOfflineMode) {
+      setAlertData({
+        visible: true,
+        title: "Offline Mode",
+        message: "You cannot add photos to albums while offline."
+      });
+      return;
+    }
+    const selectedArr = photos.filter(p => selectedPhotos.has(p.id));
+    if (selectedArr.length === 0) return;
+    setPhotosToAddToAlbum(selectedArr);
+    setShowAddToAlbumModal(true);
+  };
+
+  const confirmAddToAlbum = async (albumId) => {
+    setShowAddToAlbumModal(false);
+    setIsMovingToVault(true); // Re-use the full-screen loading spinner overlay
+
+    try {
+      const finalPhotoIds = [];
+      for (const photo of photosToAddToAlbum) {
+        let remoteId = photo.remoteFileId;
+        if (!remoteId) {
+          // Upload local photo first
+          let assetUri = photo.uri;
+          try {
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo.id);
+            assetUri = assetInfo.localUri || assetInfo.uri;
+          } catch (e) {}
+
+          const tempFileUri = `${FileSystem.cacheDirectory}${photo.filename}`;
+          await FileSystem.copyAsync({ from: assetUri, to: tempFileUri });
+
+          const uploadResult = await FileSystem.uploadAsync(
+            `${client.defaults.baseURL}/drive/upload`,
+            tempFileUri,
+            {
+              httpMethod: 'POST',
+              uploadType: 1, // MULTIPART
+              fieldName: 'file',
+              mimeType: 'image/jpeg',
+              parameters: {
+                originalName: photo.filename,
+                isBackup: 'true',
+                creationTime: photo.creationTime ? photo.creationTime.toString() : Date.now().toString()
+              },
+              headers: { Authorization: `Bearer ${userToken}` }
+            }
+          );
+
+          await FileSystem.deleteAsync(tempFileUri, { idempotent: true });
+
+          if (uploadResult.status === 200) {
+            const resData = JSON.parse(uploadResult.body);
+            remoteId = resData.id;
+          } else {
+            throw new Error(`Upload failed for ${photo.filename}`);
+          }
+        }
+        if (remoteId) finalPhotoIds.push(remoteId);
+      }
+
+      await client.post(`/albums/${albumId}/photos`, { photoIds: finalPhotoIds });
+
+      const cachedPhotos = await getCachedAlbumPhotos(albumId);
+      const existingIds = cachedPhotos.map(cp => cp.remote_file_id || cp.id);
+      const mergedIds = [...existingIds, ...finalPhotoIds.map(String)];
+      await upsertAlbumPhotosCache(albumId, mergedIds);
+
+      fetchAlbums();
+
+      setAlertData({
+        visible: true,
+        title: "Added to Album",
+        message: `${finalPhotoIds.length} photo(s) added successfully.`
+      });
+      setSelectedPhotos(new Set());
+    } catch (e) {
+      console.error(e);
+      setAlertData({
+        visible: true,
+        title: "Error",
+        message: "Failed to add photos to album."
+      });
+    } finally {
+      setIsMovingToVault(false);
+      setPhotosToAddToAlbum([]);
+    }
+  };
+
+  const renderAlbumsHeader = () => {
+    const displayAlbums = albums.slice(0, 5);
+    return (
+      <View style={[styles.albumsHeaderContainer, { borderBottomColor: theme.border }]}>
+        <Text style={[styles.albumsSectionTitle, { color: theme.text }]}>Albums</Text>
+        <FlatList
+          data={[
+            { type: 'create' },
+            ...displayAlbums.map(a => ({ type: 'album', ...a })),
+            { type: 'view_all' }
+          ]}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(item, index) => item.type + (item.id || index).toString()}
+          contentContainerStyle={styles.albumsHeaderList}
+          renderItem={({ item }) => {
+            if (item.type === 'create') {
+              return (
+                <TouchableOpacity
+                  style={[styles.albumCardHeader, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    if (isOfflineMode) {
+                      setAlertData({
+                        visible: true,
+                        title: "Offline Mode",
+                        message: "You are currently offline. Album creation requires an active internet connection."
+                      });
+                    } else {
+                      setNewAlbumName('');
+                      setNewAlbumDesc('');
+                      setSelectedForNewAlbum(new Set());
+                      setShowCreateAlbumModal(true);
+                    }
+                  }}
+                >
+                  <View style={styles.albumCardHeaderIcon}>
+                    <Ionicons name="add" size={32} color={theme.primary} />
+                  </View>
+                  <Text style={[styles.albumCardHeaderTitle, { color: theme.text }]} numberOfLines={1}>
+                    New Album
+                  </Text>
+                </TouchableOpacity>
+              );
+            }
+            if (item.type === 'view_all') {
+              return (
+                <TouchableOpacity
+                  style={[styles.albumCardHeader, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  activeOpacity={0.8}
+                  onPress={() => navigation.navigate('AllAlbums')}
+                >
+                  <View style={styles.albumCardHeaderIcon}>
+                    <MaterialCommunityIcons name="image-multiple-outline" size={32} color={theme.textSecondary} />
+                  </View>
+                  <Text style={[styles.albumCardHeaderTitle, { color: theme.text }]} numberOfLines={1}>
+                    View All
+                  </Text>
+                </TouchableOpacity>
+              );
+            }
+            const coverUri = item.coverPhotoId
+              ? `${client.defaults.baseURL}/drive/thumbnail/${item.coverPhotoId}`
+              : null;
+            return (
+              <TouchableOpacity
+                style={[styles.albumCardHeader, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                activeOpacity={0.8}
+                onPress={() => navigation.navigate('AlbumDetails', { albumId: item.id, albumName: item.name })}
+              >
+                <View style={styles.albumCardHeaderCover}>
+                  {coverUri ? (
+                    <Image
+                      source={{ uri: coverUri, headers: { Authorization: `Bearer ${userToken}` } }}
+                      style={styles.albumCardHeaderImage}
+                    />
+                  ) : (
+                    <MaterialCommunityIcons name="image-album" size={32} color={theme.textSecondary} />
+                  )}
+                  <View style={styles.albumCardHeaderBadge}>
+                    <Text style={styles.albumCardHeaderBadgeText}>{item.photoCount || 0}</Text>
+                  </View>
+                </View>
+                <Text style={[styles.albumCardHeaderTitle, { color: theme.text }]} numberOfLines={1}>
+                  {item.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          }}
+        />
+      </View>
+    );
+  };
 
   const handleMoveSinglePhotoToVault = (photo) => {
     if (!hasVaultSetup) {
@@ -732,6 +1094,11 @@ export default function TimelineScreen({ navigation }) {
               </TouchableOpacity>
             )}
             {selectedPhotos.size > 0 && (
+              <TouchableOpacity onPress={handleBatchAddToAlbum} style={{ padding: 8, marginRight: 8 }}>
+                <MaterialCommunityIcons name="folder-plus-outline" size={24} color="#fff" />
+              </TouchableOpacity>
+            )}
+            {selectedPhotos.size > 0 && (
               <TouchableOpacity onPress={handleMoveSelectedPhotosToVault} style={{ padding: 8, marginRight: 8 }}>
                 <MaterialCommunityIcons name="safe" size={24} color="#fff" />
               </TouchableOpacity>
@@ -996,6 +1363,7 @@ export default function TimelineScreen({ navigation }) {
                 layout.size = imageSize;
               }
             }}
+            ListHeaderComponent={renderAlbumsHeader}
           />
 
           {/* Custom Fast Scroller */}
@@ -1107,6 +1475,11 @@ export default function TimelineScreen({ navigation }) {
                   </TouchableOpacity>
                 )}
 
+                <TouchableOpacity onPress={() => handleAddSinglePhotoToAlbum(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
+                  <MaterialCommunityIcons name="folder-plus-outline" size={24} color="#fff" />
+                  <Text style={styles.viewerFooterBtnText}>Add to Album</Text>
+                </TouchableOpacity>
+
                 <TouchableOpacity onPress={() => handleMoveSinglePhotoToVault(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
                   <MaterialCommunityIcons name="safe" size={24} color="#fff" />
                   <Text style={styles.viewerFooterBtnText}>Move to Vault</Text>
@@ -1119,6 +1492,140 @@ export default function TimelineScreen({ navigation }) {
               </BlurView>
             </Animated.View>
           )}
+        </View>
+      </Modal>
+
+      {/* Create Album Modal */}
+      <Modal visible={showCreateAlbumModal} transparent animationType="slide" onRequestClose={() => setShowCreateAlbumModal(false)}>
+        <View style={styles.sheetOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: theme.background }]}>
+            <View style={[styles.sheetHeader, { borderBottomColor: theme.border }]}>
+              <TouchableOpacity onPress={() => setShowCreateAlbumModal(false)} style={{ padding: 8 }}>
+                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.sheetTitle, { color: theme.text }]}>New Album</Text>
+              <TouchableOpacity onPress={handleSaveAlbum} style={{ padding: 8 }} disabled={isCreatingAlbum}>
+                {isCreatingAlbum ? (
+                  <ActivityIndicator size="small" color={theme.primary} />
+                ) : (
+                  <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 16 }}>Create</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.formContainer}>
+              <TextInput
+                style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.surface }]}
+                placeholder="Album Name"
+                placeholderTextColor={theme.textSecondary}
+                value={newAlbumName}
+                onChangeText={setNewAlbumName}
+              />
+              <TextInput
+                style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.surface }]}
+                placeholder="Description (Optional)"
+                placeholderTextColor={theme.textSecondary}
+                value={newAlbumDesc}
+                onChangeText={setNewAlbumDesc}
+              />
+            </View>
+
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Photos</Text>
+              <FlashList
+                data={photos}
+                keyExtractor={(item) => item.id}
+                numColumns={3}
+                estimatedItemSize={120}
+                renderItem={({ item }) => {
+                  const isSelected = selectedForNewAlbum.has(item.id);
+                  const pSize = width / 3 - 2;
+                  return (
+                    <TouchableOpacity
+                      style={{ width: pSize, height: pSize, margin: 1, position: 'relative' }}
+                      onPress={() => toggleSelectForNewAlbum(item.id)}
+                    >
+                      <Image
+                        source={
+                          offlinePhotos[item.id]
+                            ? { uri: typeof offlinePhotos[item.id] === 'string' ? offlinePhotos[item.id] : offlinePhotos[item.id].localPath }
+                            : (item.headers ? { uri: item.thumbnailUri || item.uri, headers: item.headers } : { uri: item.uri })
+                        }
+                        style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                      />
+                      <View style={[styles.checkOverlay, { backgroundColor: isSelected ? 'rgba(0,122,255,0.4)' : 'rgba(0,0,0,0.1)' }]}>
+                        <Ionicons
+                          name={isSelected ? "checkmark-circle" : "ellipse-outline"}
+                          size={24}
+                          color={isSelected ? '#fff' : 'rgba(255,255,255,0.7)'}
+                        />
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Add to Album Chooser Modal */}
+      <Modal visible={showAddToAlbumModal} transparent animationType="slide" onRequestClose={() => setShowAddToAlbumModal(false)}>
+        <View style={styles.sheetOverlay}>
+          <View style={[styles.modalSheet, { backgroundColor: theme.background, height: '60%' }]}>
+            <View style={[styles.sheetHeader, { borderBottomColor: theme.border }]}>
+              <TouchableOpacity onPress={() => setShowAddToAlbumModal(false)} style={{ padding: 8 }}>
+                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.sheetTitle, { color: theme.text }]}>Add to Album</Text>
+              <View style={{ width: 60 }} />
+            </View>
+
+            {albums.length === 0 ? (
+              <View style={styles.centeredEmptyState}>
+                <MaterialCommunityIcons name="image-album" size={64} color={theme.textSecondary} style={{ marginBottom: 16 }} />
+                <Text style={{ color: theme.text, fontSize: 16, textAlign: 'center', marginBottom: 8 }}>No Albums Found</Text>
+                <Text style={{ color: theme.textSecondary, fontSize: 14, textAlign: 'center', paddingHorizontal: 32 }}>
+                  Create an album first from the timeline to add photos.
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={albums}
+                keyExtractor={(item) => item.id.toString()}
+                contentContainerStyle={{ padding: 16 }}
+                renderItem={({ item }) => {
+                  const coverUri = item.coverPhotoId
+                    ? `${client.defaults.baseURL}/drive/thumbnail/${item.coverPhotoId}`
+                    : null;
+                  return (
+                    <TouchableOpacity
+                      style={[styles.albumSelectRow, { borderBottomColor: theme.border }]}
+                      onPress={() => confirmAddToAlbum(item.id)}
+                    >
+                      <View style={styles.albumSelectRowLeft}>
+                        {coverUri ? (
+                          <Image
+                            source={{ uri: coverUri, headers: { Authorization: `Bearer ${userToken}` } }}
+                            style={styles.albumSelectRowImage}
+                          />
+                        ) : (
+                          <View style={[styles.albumSelectRowPlaceholder, { backgroundColor: theme.surface }]}>
+                            <MaterialCommunityIcons name="image-album" size={24} color={theme.textSecondary} />
+                          </View>
+                        )}
+                        <View style={{ marginLeft: 12 }}>
+                          <Text style={[styles.albumSelectTitle, { color: theme.text }]}>{item.name}</Text>
+                          <Text style={[styles.albumSelectCount, { color: theme.textSecondary }]}>{item.photoCount || 0} photos</Text>
+                        </View>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+          </View>
         </View>
       </Modal>
 
@@ -1148,7 +1655,9 @@ export default function TimelineScreen({ navigation }) {
       {isMovingToVault && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#fff" />
-          <Text style={{ color: '#fff', marginTop: 12, fontWeight: 'bold' }}>Encrypting and moving to Vault...</Text>
+          <Text style={{ color: '#fff', marginTop: 12, fontWeight: 'bold' }}>
+            {photosToAddToAlbum.length > 0 ? "Uploading and adding to Album..." : "Encrypting and moving to Vault..."}
+          </Text>
         </View>
       )}
 
@@ -1451,5 +1960,154 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 9999,
+  },
+  albumsHeaderContainer: {
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  albumsSectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginLeft: 16,
+    marginBottom: 12,
+  },
+  albumsHeaderList: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  albumCardHeader: {
+    width: 100,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  albumCardHeaderIcon: {
+    width: 60,
+    height: 78,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  albumCardHeaderTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 8,
+    textAlign: 'center',
+    width: '100%',
+  },
+  albumCardHeaderCover: {
+    width: 60,
+    height: 78,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  albumCardHeaderImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  albumCardHeaderBadge: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  albumCardHeaderBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  // Form and modals
+  formContainer: {
+    padding: 16,
+    gap: 12,
+  },
+  input: {
+    height: 48,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+  },
+  pickerTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 16,
+    marginVertical: 12,
+  },
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    height: '80%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
+  },
+  sheetHeader: {
+    height: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  checkOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    padding: 6,
+  },
+  albumSelectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  albumSelectRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  albumSelectRowImage: {
+    width: 48,
+    height: 64,
+    borderRadius: 8,
+    resizeMode: 'cover',
+  },
+  albumSelectRowPlaceholder: {
+    width: 48,
+    height: 64,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  albumSelectTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  albumSelectCount: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  centeredEmptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
   }
 });

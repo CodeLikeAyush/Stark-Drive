@@ -45,6 +45,21 @@ export const initDB = async () => {
         payload TEXT,
         created_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS albums (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        cover_photo_id TEXT,
+        photo_count INTEGER DEFAULT 0,
+        creation_time INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS album_photos (
+        album_id TEXT NOT NULL,
+        photo_id TEXT NOT NULL,
+        PRIMARY KEY (album_id, photo_id)
+      );
     `);
 
     // Migration: Add has_thumbnail column to files table if it doesn't exist
@@ -168,4 +183,64 @@ export const markPhotoNotAvailableOffline = async (id) => {
 export const getPhotos = async () => {
   const database = getDB();
   return await database.getAllAsync(`SELECT * FROM photos ORDER BY creation_time DESC`);
+};
+
+// --- Albums ---
+
+export const upsertAlbumCache = async (album) => {
+  const database = getDB();
+  await database.runAsync(
+    `INSERT INTO albums (id, name, description, cover_photo_id, photo_count, creation_time) 
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET 
+       name=excluded.name, 
+       description=excluded.description, 
+       cover_photo_id=excluded.cover_photo_id, 
+       photo_count=excluded.photo_count,
+       creation_time=excluded.creation_time`,
+    [
+      album.id.toString(),
+      album.name || 'Untitled Album',
+      album.description || null,
+      album.coverPhotoId ? album.coverPhotoId.toString() : null,
+      album.photoCount || 0,
+      album.creationTime || Date.now()
+    ]
+  );
+};
+
+export const upsertAlbumPhotosCache = async (albumId, photoIds) => {
+  const database = getDB();
+  // Clear existing relationships for this album first
+  await database.runAsync(`DELETE FROM album_photos WHERE album_id = ?`, [albumId.toString()]);
+  
+  // Insert new relationships
+  for (const photoId of photoIds) {
+    await database.runAsync(
+      `INSERT OR IGNORE INTO album_photos (album_id, photo_id) VALUES (?, ?)`,
+      [albumId.toString(), photoId.toString()]
+    );
+  }
+};
+
+export const getCachedAlbums = async () => {
+  const database = getDB();
+  return await database.getAllAsync(`SELECT * FROM albums ORDER BY creation_time DESC`);
+};
+
+export const getCachedAlbumPhotos = async (albumId) => {
+  const database = getDB();
+  return await database.getAllAsync(
+    `SELECT p.* FROM photos p 
+     INNER JOIN album_photos ap ON p.id = ap.photo_id 
+     WHERE ap.album_id = ? 
+     ORDER BY p.creation_time DESC`,
+    [albumId.toString()]
+  );
+};
+
+export const deleteAlbumCache = async (albumId) => {
+  const database = getDB();
+  await database.runAsync(`DELETE FROM albums WHERE id = ?`, [albumId.toString()]);
+  await database.runAsync(`DELETE FROM album_photos WHERE album_id = ?`, [albumId.toString()]);
 };

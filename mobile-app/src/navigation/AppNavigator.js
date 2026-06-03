@@ -19,6 +19,8 @@ import ServerSetupScreen from '../screens/ServerSetupScreen';
 import OfflineBand from '../components/OfflineBand';
 import PdfViewerScreen from '../screens/PdfViewerScreen';
 import ImageViewerScreen from '../screens/ImageViewerScreen';
+import AllAlbumsScreen from '../screens/AllAlbumsScreen';
+import AlbumDetailsScreen from '../screens/AlbumDetailsScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -218,6 +220,25 @@ export default function AppNavigator() {
         )}
         <Stack.Screen name="PdfViewer" component={PdfViewerScreen} />
         <Stack.Screen name="ImageViewer" component={ImageViewerScreen} />
+        <Stack.Screen 
+          name="AllAlbums" 
+          component={AllAlbumsScreen} 
+          options={{ 
+            headerShown: true, 
+            title: 'Albums',
+            headerStyle: { backgroundColor: theme.surface },
+            headerTintColor: theme.text
+          }} 
+        />
+        <Stack.Screen 
+          name="AlbumDetails" 
+          component={AlbumDetailsScreen} 
+          options={{ 
+            headerShown: true,
+            headerStyle: { backgroundColor: theme.surface },
+            headerTintColor: theme.text
+          }} 
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
