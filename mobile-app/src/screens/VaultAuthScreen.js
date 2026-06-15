@@ -4,17 +4,18 @@ import { ThemeContext } from '../theme/ThemeContext';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { deriveKeyFromPin } from '../utils/crypto';
+import { deriveKeyFromPin, generateMasterKey, encryptMasterKey, decryptMasterKey } from '../utils/crypto';
 import { AuthContext } from '../context/AuthContext';
 import client from '../api/client';
 
 import { useIsFocused } from '@react-navigation/native';
 
 const VAULT_PIN_KEY_PREFIX = 'VAULT_SECURE_PIN_';
+const VAULT_MASTER_KEY_PREFIX = 'VAULT_MASTER_KEY_';
 
 export default function VaultAuthScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
-  const { userEmail, hasVaultSetup, setHasVaultSetup } = useContext(AuthContext);
+  const { userEmail, hasVaultSetup, setHasVaultSetup, encryptedVaultKey, setEncryptedVaultKey } = useContext(AuthContext);
   const isFocused = useIsFocused();
   const hasPrompted = useRef(false);
   const [pin, setPin] = useState('');
@@ -31,6 +32,11 @@ export default function VaultAuthScreen({ navigation }) {
   const getSafePinKey = () => {
     const safeEmail = userEmail ? userEmail.replace(/[^a-zA-Z0-9.\-_]/g, '_') : 'default';
     return `${VAULT_PIN_KEY_PREFIX}${safeEmail}`;
+  };
+
+  const getSafeMasterKeyKey = () => {
+    const safeEmail = userEmail ? userEmail.replace(/[^a-zA-Z0-9.\-_]/g, '_') : 'default';
+    return `${VAULT_MASTER_KEY_PREFIX}${safeEmail}`;
   };
 
   useEffect(() => {
@@ -52,7 +58,7 @@ export default function VaultAuthScreen({ navigation }) {
         if (!hasVaultSetup) {
           setHasVaultSetup(true);
           try {
-            await client.put('/auth/vault-setup');
+            await client.put('/auth/vault-setup', { encryptedVaultKey: encryptedVaultKey });
           } catch (e) {
             console.warn("Failed to sync vault setup with server", e);
           }
@@ -83,7 +89,33 @@ export default function VaultAuthScreen({ navigation }) {
     return () => {
       appStateSubscription?.remove();
     };
-  }, [isFocused, hasVaultSetup]);
+  }, [isFocused, hasVaultSetup, encryptedVaultKey]);
+
+  const unlockVault = async (enteredPin, storedEncryptedKey) => {
+    try {
+      let masterKey = null;
+      if (!storedEncryptedKey) {
+        // Legacy user migration: Derive Master Key directly from current PIN
+        masterKey = await deriveKeyFromPin(enteredPin);
+        const newEncKey = await encryptMasterKey(masterKey, enteredPin);
+        
+        await client.put('/auth/vault-setup', { encryptedVaultKey: newEncKey });
+        await setEncryptedVaultKey(newEncKey);
+      } else {
+        // Decrypt Master Key
+        masterKey = await decryptMasterKey(storedEncryptedKey, enteredPin);
+      }
+      
+      const masterKeyKey = getSafeMasterKeyKey();
+      await SecureStore.setItemAsync(masterKeyKey, masterKey);
+      
+      navigation.replace('VaultScreen', { vaultPin: enteredPin, masterKey });
+    } catch (e) {
+      console.error("Unlock failed", e);
+      setError('Decryption failed. Incorrect PIN or corrupted key package.');
+      setPin('');
+    }
+  };
 
   const promptBiometrics = async (storedPin) => {
     try {
@@ -99,7 +131,7 @@ export default function VaultAuthScreen({ navigation }) {
         });
 
         if (result.success) {
-          navigation.replace('VaultScreen', { vaultPin: storedPin });
+          await unlockVault(storedPin, encryptedVaultKey);
           return;
         }
       }
@@ -120,7 +152,7 @@ export default function VaultAuthScreen({ navigation }) {
 
     if (isSettingUp) {
       if (step === 'ENTER') {
-        if (pin.length < 4) {
+        if (pin.length < 6) {
           setError('PIN must be at least 6 digits');
           return;
         }
@@ -133,24 +165,35 @@ export default function VaultAuthScreen({ navigation }) {
           return;
         }
         try {
+          // 1. Generate new Master Key
+          const masterKey = generateMasterKey();
+          
+          // 2. Encrypt Master Key with PIN-derived KEK
+          const newEncKey = await encryptMasterKey(masterKey, pin);
+          
+          // 3. Save PIN, Master Key locally, and sync to backend
           const pinKey = getSafePinKey();
           await SecureStore.setItemAsync(pinKey, pin);
+          
+          const masterKeyKey = getSafeMasterKeyKey();
+          await SecureStore.setItemAsync(masterKeyKey, masterKey);
 
           try {
-            await client.put('/auth/vault-setup');
+            await client.put('/auth/vault-setup', { encryptedVaultKey: newEncKey });
             setHasVaultSetup(true);
+            setEncryptedVaultKey(newEncKey);
           } catch (e) {
             console.warn("Failed to notify server of vault setup", e);
           }
 
-          navigation.replace('VaultScreen', { vaultPin: pin });
+          navigation.replace('VaultScreen', { vaultPin: pin, masterKey });
         } catch (e) {
           setError('Failed to save PIN');
         }
         return;
       }
     } else {
-      if (pin.length < 4) {
+      if (pin.length < 6) {
         setError('PIN must be at least 6 digits');
         return;
       }
@@ -160,20 +203,46 @@ export default function VaultAuthScreen({ navigation }) {
 
         if (storedPin) {
           if (pin === storedPin) {
-            navigation.replace('VaultScreen', { vaultPin: pin });
+            await unlockVault(pin, encryptedVaultKey);
           } else {
             setError('Incorrect PIN');
             setPin('');
           }
+        } else if (hasVaultSetup && encryptedVaultKey) {
+          // New device or re-login flow: verify PIN by attempting to decrypt the server-wrapped key
+          try {
+            await unlockVault(pin, encryptedVaultKey);
+            // Save the PIN locally on successful verification
+            await SecureStore.setItemAsync(pinKey, pin);
+          } catch (unlockErr) {
+            setError('Incorrect PIN');
+            setPin('');
+          }
         } else {
+          // Fallback: Create first PIN if it was somehow lost and vault is not setup
+          const masterKey = generateMasterKey();
+          const newEncKey = await encryptMasterKey(masterKey, pin);
+          
           await SecureStore.setItemAsync(pinKey, pin);
-          navigation.replace('VaultScreen', { vaultPin: pin });
+          const masterKeyKey = getSafeMasterKeyKey();
+          await SecureStore.setItemAsync(masterKeyKey, masterKey);
+          
+          try {
+            await client.put('/auth/vault-setup', { encryptedVaultKey: newEncKey });
+            setHasVaultSetup(true);
+            setEncryptedVaultKey(newEncKey);
+          } catch (e) {
+            console.warn("Failed to sync setup", e);
+          }
+          
+          navigation.replace('VaultScreen', { vaultPin: pin, masterKey });
         }
       } catch (e) {
         setError('An error occurred');
       }
     }
   };
+
 
   if (loading) {
     return (

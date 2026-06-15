@@ -21,6 +21,9 @@ import PdfViewerScreen from '../screens/PdfViewerScreen';
 import ImageViewerScreen from '../screens/ImageViewerScreen';
 import AllAlbumsScreen from '../screens/AllAlbumsScreen';
 import AlbumDetailsScreen from '../screens/AlbumDetailsScreen';
+import CredentialFormScreen from '../screens/CredentialFormScreen';
+import ChangeVaultPinScreen from '../screens/ChangeVaultPinScreen';
+
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -114,9 +117,11 @@ function VaultStack() {
     >
       <Stack.Screen name="VaultAuth" component={VaultAuthScreen} />
       <Stack.Screen name="VaultScreen" component={VaultScreen} />
+      <Stack.Screen name="CredentialForm" component={CredentialFormScreen} />
     </Stack.Navigator>
   );
 }
+
 
 export const navigationRef = createNavigationContainerRef();
 
@@ -242,7 +247,19 @@ export default function AppNavigator() {
             headerTintColor: theme.text
           }} 
         />
+        <Stack.Screen 
+          name="ChangeVaultPin" 
+          component={ChangeVaultPinScreen} 
+          options={{ 
+            headerShown: true,
+            title: 'Change Vault PIN',
+            headerStyle: { backgroundColor: theme.background },
+            headerShadowVisible: false,
+            headerTintColor: theme.text
+          }} 
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
 }
+

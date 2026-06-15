@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import * as SecureStore from 'expo-secure-store';
 
-export default function AccountScreen() {
+export default function AccountScreen({ navigation }) {
   const { logout, userEmail, userName, updateUserName, autoBackupEnabled, setAutoBackupEnabled, disconnectServer } = useContext(AuthContext);
   const { theme, themeMode, setThemeMode } = useContext(ThemeContext);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -123,6 +123,19 @@ export default function AccountScreen() {
           <ThemeOption mode="dark" label="Dark" icon="moon" />
           <ThemeOption mode="system" label="Auto" icon="phone-portrait" />
         </View>
+      </View>
+
+      <Text style={sectionTitleStyle}>SECURITY</Text>
+      <View style={sectionStyle}>
+        <TouchableOpacity 
+          style={[styles.row, { borderBottomColor: 'transparent', borderBottomWidth: 0 }]}
+          onPress={() => navigation.navigate('ChangeVaultPin')}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="lock-closed-outline" size={22} color={theme.primary} style={{ marginRight: 12 }} />
+            <Text style={[styles.rowText, { color: theme.text }]}>Change Vault PIN</Text>
+          </View>
+        </TouchableOpacity>
       </View>
 
       <Text style={sectionTitleStyle}>ACCOUNT</Text>

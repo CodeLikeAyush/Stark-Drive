@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform, PanResponder, Animated, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, AppState, TextInput, KeyboardAvoidingView, Platform, PanResponder, Animated, useWindowDimensions, ScrollView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlashList } from '@shopify/flash-list';
@@ -10,16 +10,16 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { BlurView } from 'expo-blur';
+import * as Clipboard from 'expo-clipboard';
 import axios from 'axios';
-import { encryptFileAsync, decryptFileAsync } from '../utils/crypto';
+import { encryptFileAsync, decryptFileAsync, decryptText } from '../utils/crypto';
 import client from '../api/client';
-import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles } from '../db/Database';
+import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles, getCredentials, deleteCredential, upsertCredentialCache } from '../db/Database';
 import ConfirmModal from '../components/ConfirmModal';
-
-
+import AlertModal from '../components/AlertModal';
 
 export default function VaultScreen({ route, navigation }) {
-  const { vaultPin } = route.params;
+  const { vaultPin, masterKey } = route.params;
   const { theme, isDark } = useContext(ThemeContext);
   const { userToken, isOfflineMode } = useContext(AuthContext);
 
@@ -37,27 +37,62 @@ export default function VaultScreen({ route, navigation }) {
     numColumns = isLandscape ? 2 : 1;
   }
 
+  // Active Tab: 'FILES' | 'CREDENTIALS'
+  const [activeTab, setActiveTab] = useState('FILES');
+
+  // Search query state
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Files state
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [alertData, setAlertData] = useState({ visible: false, title: '', message: '', confirmText: '', onConfirm: null, confirmStyle: 'default' });
+  const [alertData, setAlertData] = useState({ visible: false, title: '', message: '', confirmText: '', onConfirm: null, confirmStyle: 'default', showCancel: false });
   const appState = useRef(AppState.currentState);
   const isSystemUiActive = useRef(false);
+
+  // Credentials state
+  const [credentials, setCredentials] = useState([]);
+  const [loadingCredentials, setLoadingCredentials] = useState(false);
+  const [decryptedCredential, setDecryptedCredential] = useState(null);
+  const [isDetailsVisible, setIsDetailsVisible] = useState(false);
+  const [showSecrets, setShowSecrets] = useState({});
+
+  // In-memory filtered credentials based on search query
+  const filteredCredentials = credentials.filter(c => {
+    const q = searchQuery.toLowerCase().trim();
+    return (
+      (c.title && c.title.toLowerCase().includes(q)) ||
+      (c.type && c.type.toLowerCase().includes(q))
+    );
+  });
+
+  // In-memory filtered files based on search query
+  const filteredFiles = files.filter(f => {
+    const q = searchQuery.toLowerCase().trim();
+    return f.originalFilename && f.originalFilename.toLowerCase().includes(q);
+  });
+
+  // Info Modal state (replaces simple Alert.alert calls)
+  const [infoModal, setInfoModal] = useState({ visible: false, title: '', message: '', icon: 'information-circle' });
+
+  const showInfoModal = (infoTitle, infoMessage, infoIcon = 'information-circle') => {
+    setInfoModal({ visible: true, title: infoTitle, message: infoMessage, icon: infoIcon });
+  };
 
   // Offline states
   const [offlineFiles, setOfflineFiles] = useState({});
   const [offlineTogglingId, setOfflineTogglingId] = useState(null);
   const OFFLINE_VAULT_DIR = `${FileSystem.documentDirectory}offline_vault/`;
-  const REGISTRY_FILE = `${FileSystem.documentDirectory}offline_vault_registry.json`;
 
-  // Item Action Menu State
+  // Item Action Menu State (for Files)
   const [selectedItem, setSelectedItem] = useState(null);
   const [isActionMenuVisible, setIsActionMenuVisible] = useState(false);
   const [isRenameModalVisible, setIsRenameModalVisible] = useState(false);
   const [renameText, setRenameText] = useState('');
 
-  // Action bottom sheet swipe gesture
+  // Action bottom sheet swipe gesture (Files menu)
   const actionTranslateY = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (isActionMenuVisible) {
@@ -95,17 +130,30 @@ export default function VaultScreen({ route, navigation }) {
     })
   ).current;
 
-  // Lock the vault if the user switches to a different tab/screen
-  useFocusEffect(
-    useCallback(() => {
-      fetchVaultFiles();
+  // Lock the vault if the user switches to a different tab (i.e. parent stack navigator is blurred)
+  useEffect(() => {
+    const parentStack = navigation.getParent();
+    if (!parentStack) return;
 
-      return () => {
-        // This runs when the screen loses navigation focus
+    const unsubscribe = parentStack.addListener('blur', () => {
+      // Only lock if the entire stack navigator itself has lost focus (i.e. tab switched)
+      if (!parentStack.isFocused()) {
         navigation.replace('VaultAuth');
-      };
-    }, [navigation])
-  );
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation]);
+
+  // Fetch data when activeTab changes or when screen is first loaded
+  useEffect(() => {
+    setSearchQuery('');
+    if (activeTab === 'FILES') {
+      fetchVaultFiles();
+    } else {
+      fetchVaultCredentials();
+    }
+  }, [activeTab]);
 
   const refreshOfflineState = async () => {
     try {
@@ -143,6 +191,8 @@ export default function VaultScreen({ route, navigation }) {
     };
   }, [navigation]);
 
+  // --- Files Operations ---
+
   const fetchVaultFiles = async () => {
     try {
       setLoading(true);
@@ -158,17 +208,19 @@ export default function VaultScreen({ route, navigation }) {
       }
 
       // 2. Fetch from Network
-      const res = await client.get('/drive/vault/list', { timeout: 3000 });
-      const serverData = res.data || [];
+      if (!isOfflineMode) {
+        const res = await client.get('/drive/vault/list', { timeout: 3000 });
+        const serverData = res.data || [];
 
-      // 3. Upsert into SQLite
-      for (const f of serverData) {
-        await upsertFileCache(f, 1);
+        // 3. Upsert into SQLite
+        for (const f of serverData) {
+          await upsertFileCache(f, 1);
+        }
+
+        // 4. Update UI with fresh server data
+        setFiles(serverData);
+        refreshOfflineState();
       }
-
-      // 4. Update UI with fresh server data
-      setFiles(serverData);
-      refreshOfflineState();
 
     } catch (e) {
       console.warn("Failed to fetch vault files from network, using cache", e);
@@ -188,8 +240,8 @@ export default function VaultScreen({ route, navigation }) {
       const file = result.assets[0];
       setIsUploading(true);
 
-      // 1. Encrypt locally
-      const encryptedUri = await encryptFileAsync(file.uri, vaultPin);
+      // 1. Encrypt locally using Master Key
+      const encryptedUri = await encryptFileAsync(file.uri, masterKey);
 
       const uploadResult = await FileSystem.uploadAsync(
         `${client.defaults.baseURL}/drive/upload`,
@@ -224,7 +276,8 @@ export default function VaultScreen({ route, navigation }) {
         title: "Upload Failed",
         message: "Could not encrypt and upload file. Is it too large?",
         confirmText: "OK",
-        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+        showCancel: false
       });
     } finally {
       setIsUploading(false);
@@ -263,20 +316,19 @@ export default function VaultScreen({ route, navigation }) {
             title: "Error",
             message: "You appear to be offline. Make this file available offline when connected.",
             confirmText: "OK",
-            onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+            onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+            showCancel: false
           });
-          setDownloadingId(null);
           return;
         }
         encryptedUriToDecrypt = uri;
       }
 
-      // 2. Decrypt locally
-      // We need to extract the extension to help Sharing open it correctly
+      // 2. Decrypt locally using Master Key
       const extMatch = file.originalFilename.match(/\.[^.]+$/);
       const ext = extMatch ? extMatch[0] : '';
 
-      const decryptedUri = await decryptFileAsync(encryptedUriToDecrypt, vaultPin, ext);
+      const decryptedUri = await decryptFileAsync(encryptedUriToDecrypt, masterKey, ext);
 
       // 3. Open
       const filenameLower = (file.originalFilename || '').toLowerCase();
@@ -299,7 +351,8 @@ export default function VaultScreen({ route, navigation }) {
             title: "Error",
             message: "Sharing is not available on this device",
             confirmText: "OK",
-            onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+            onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+            showCancel: false
           });
         }
       }
@@ -308,17 +361,16 @@ export default function VaultScreen({ route, navigation }) {
       if (!usingOffline) {
         await FileSystem.deleteAsync(tempLocalEncUri, { idempotent: true });
       }
-      // Note: We might want to keep the decrypted file around temporarily, but for maximum security we delete it after sharing?
-      // Unfortunately expo-sharing is asynchronous and might need the file. We'll leave it in cache, it gets cleared by OS eventually.
 
     } catch (e) {
       console.error(e);
       setAlertData({
         visible: true,
         title: "Decryption Failed",
-        message: "Could not open file. PIN might be invalid or file is corrupted.",
+        message: "Could not open file. Key might be invalid or file is corrupted.",
         confirmText: "OK",
-        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+        showCancel: false
       });
     } finally {
       setProcessingId(null);
@@ -359,7 +411,8 @@ export default function VaultScreen({ route, navigation }) {
         } else {
           setAlertData({
             visible: true, title: "Error", message: "Failed to download file for offline use.",
-            confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+            confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+            showCancel: false
           });
         }
       }
@@ -367,7 +420,8 @@ export default function VaultScreen({ route, navigation }) {
     } catch (e) {
       setAlertData({
         visible: true, title: "Error", message: "Error toggling offline mode.",
-        confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+        confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+        showCancel: false
       });
     } finally {
       setOfflineTogglingId(null);
@@ -404,7 +458,8 @@ export default function VaultScreen({ route, navigation }) {
     } catch (e) {
       setAlertData({
         visible: true, title: "Error", message: "Could not rename file",
-        confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+        confirmText: "OK", onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+        showCancel: false
       });
     }
   };
@@ -416,7 +471,6 @@ export default function VaultScreen({ route, navigation }) {
         await FileSystem.deleteAsync(offlineFiles[selectedItem.id], { idempotent: true });
         const newReg = { ...offlineFiles };
         delete newReg[selectedItem.id];
-        await saveRegistry(newReg);
       }
       await client.delete(`/drive/items/file/${selectedItem.id}`);
       fetchVaultFiles();
@@ -426,18 +480,147 @@ export default function VaultScreen({ route, navigation }) {
         title: "Error",
         message: "Could not delete",
         confirmText: "OK",
-        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false }))
+        onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+        showCancel: false
       });
     }
   };
 
+  // --- Credentials Operations ---
 
-  const renderItem = ({ item }) => (
+  const fetchVaultCredentials = async () => {
+    try {
+      setLoadingCredentials(true);
+
+      // 1. Instantly load from local SQLite cache
+      const cached = await getCredentials();
+      setCredentials(cached);
+      if (cached.length > 0) {
+        setLoadingCredentials(false);
+      }
+
+      // 2. Fetch from Network
+      if (!isOfflineMode) {
+        const res = await client.get('/vault/credentials', { timeout: 3000 });
+        const serverData = res.data || [];
+
+        // 3. Upsert into SQLite
+        for (const c of serverData) {
+          await upsertCredentialCache({
+            id: c.id,
+            title: c.title,
+            type: c.type,
+            encryptedData: c.encryptedData,
+            updatedAt: c.updatedAt
+          });
+        }
+
+        // 4. Update UI with synced data
+        const freshCached = await getCredentials();
+        setCredentials(freshCached);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch vault credentials", e);
+    } finally {
+      setLoadingCredentials(false);
+    }
+  };
+
+  const handleCredentialPress = (item) => {
+    try {
+      // Decrypt credentials string using the Master Key
+      const decryptedStr = decryptText(item.encrypted_data || item.encryptedData, masterKey);
+      const data = JSON.parse(decryptedStr);
+      setDecryptedCredential({
+        ...item,
+        data
+      });
+      setShowSecrets({});
+      setIsDetailsVisible(true);
+    } catch (e) {
+      console.error(e);
+      showInfoModal("Decryption Failed", "Could not decrypt credential details. The key packages might be corrupted.", "alert-circle");
+    }
+  };
+
+  const closeDetails = () => {
+    setIsDetailsVisible(false);
+    setDecryptedCredential(null);
+    setShowSecrets({});
+  };
+
+  const copyToClipboard = async (text, label) => {
+    if (!text) return;
+    await Clipboard.setStringAsync(text);
+    showInfoModal("Copied", `${label} copied to clipboard.`, "checkmark-circle");
+  };
+
+  const handleEditCredential = (item) => {
+    closeDetails();
+    navigation.navigate('CredentialForm', { credential: item, masterKey });
+  };
+
+  const handleDeleteCredential = (item) => {
+    setAlertData({
+      visible: true,
+      title: "Delete Credential",
+      message: `Are you sure you want to permanently delete "${item.title}"?`,
+      confirmText: "Delete",
+      confirmStyle: "destructive",
+      showCancel: true,
+      onConfirm: async () => {
+        closeDetails();
+        setLoadingCredentials(true);
+        try {
+          await deleteCredential(item.id);
+          if (!isOfflineMode && !item.id.toString().startsWith('local_')) {
+            await client.delete(`/vault/credentials/${item.id}`);
+          }
+          fetchVaultCredentials();
+        } catch (err) {
+          console.error(err);
+          setAlertData({
+            visible: true,
+            title: "Error",
+            message: "Failed to delete credential from vault.",
+            confirmText: "OK",
+            onConfirm: () => setAlertData(prev => ({ ...prev, visible: false })),
+            showCancel: false
+          });
+        } finally {
+          setLoadingCredentials(false);
+        }
+      }
+    });
+  };
+
+  const getCredentialIcon = (type) => {
+    switch (type) {
+      case 'PASSWORD': return 'key';
+      case 'CARD': return 'credit-card';
+      case 'BANK': return 'bank';
+      case 'RECOVERY_CODE': return 'shield-key';
+      case 'PIN': return 'numeric';
+      default: return 'key-variant';
+    }
+  };
+
+  // --- UI Render Helpers ---
+
+  const handleFabPress = () => {
+    if (activeTab === 'FILES') {
+      handleUpload();
+    } else {
+      navigation.navigate('CredentialForm', { masterKey });
+    }
+  };
+
+  const renderFileItem = ({ item }) => (
     <TouchableOpacity
       style={[
         styles.fileItem,
-        { 
-          backgroundColor: theme.surface, 
+        {
+          backgroundColor: theme.surface,
           borderBottomColor: theme.border,
           flex: numColumns > 1 ? 1 : undefined,
           marginHorizontal: numColumns > 1 ? 8 : 0,
@@ -470,15 +653,86 @@ export default function VaultScreen({ route, navigation }) {
     </TouchableOpacity>
   );
 
+  const renderCredentialItem = ({ item }) => (
+    <TouchableOpacity
+      style={[
+        styles.fileItem,
+        {
+          backgroundColor: theme.surface,
+          borderBottomColor: theme.border,
+          flex: numColumns > 1 ? 1 : undefined,
+          marginHorizontal: numColumns > 1 ? 8 : 0,
+        }
+      ]}
+      onPress={() => handleCredentialPress(item)}
+    >
+      <View style={[styles.iconContainer, { backgroundColor: theme.background }]}>
+        <MaterialCommunityIcons name={getCredentialIcon(item.type)} size={28} color={theme.primary} />
+      </View>
+      <View style={styles.textContainer}>
+        <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>{item.title}</Text>
+        <Text style={[styles.fileSize, { color: theme.textSecondary }]}>
+          {item.type.charAt(0) + item.type.slice(1).toLowerCase().replace('_', ' ')} • Secured
+        </Text>
+      </View>
+      <TouchableOpacity onPress={() => handleCredentialPress(item)} style={{ padding: 4 }}>
+        <MaterialCommunityIcons name="chevron-right" size={24} color={theme.textSecondary} />
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+
+  const renderItem = ({ item }) => {
+    if (activeTab === 'FILES') {
+      return renderFileItem({ item });
+    } else {
+      return renderCredentialItem({ item });
+    }
+  };
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+
       <View style={[styles.tabletWrapper, { maxWidth: numColumns > 1 ? 1200 : 700 }]}>
-        {loading ? (
+        {/* Tab Selector */}
+        <View style={[styles.tabContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'FILES' && { backgroundColor: theme.primary }]}
+            onPress={() => setActiveTab('FILES')}
+          >
+            <Text style={[styles.tabButtonText, { color: activeTab === 'FILES' ? '#fff' : theme.textSecondary }]}>Files</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'CREDENTIALS' && { backgroundColor: theme.primary }]}
+            onPress={() => setActiveTab('CREDENTIALS')}
+          >
+            <Text style={[styles.tabButtonText, { color: activeTab === 'CREDENTIALS' ? '#fff' : theme.textSecondary }]}>Credentials</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Search Bar for Vault */}
+        <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <MaterialCommunityIcons name="magnify" size={24} color={theme.textSecondary} style={styles.searchIcon} />
+          <TextInput
+            style={[styles.searchInput, { color: theme.text }]}
+            placeholder={activeTab === 'FILES' ? "Search files..." : "Search credentials..."}
+            placeholderTextColor={theme.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <MaterialCommunityIcons name="close-circle" size={20} color={theme.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {loading || (activeTab === 'CREDENTIALS' && loadingCredentials) ? (
           <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
         ) : (
           <FlashList
-            key={`vault-${numColumns}`}
-            data={files}
+            key={`vault-${activeTab}-${numColumns}`}
+            data={activeTab === 'FILES' ? filteredFiles : filteredCredentials}
             keyExtractor={item => item.id.toString()}
             renderItem={renderItem}
             estimatedItemSize={70}
@@ -486,8 +740,13 @@ export default function VaultScreen({ route, navigation }) {
             contentContainerStyle={{ padding: 16 }}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <MaterialCommunityIcons name="safe" size={80} color={theme.border} />
-                <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Your Vault is empty.</Text>
+                <MaterialCommunityIcons name={activeTab === 'FILES' ? (searchQuery ? "magnify" : "safe") : (searchQuery ? "magnify" : "key-variant")} size={80} color={theme.border} />
+                <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+                  {activeTab === 'FILES'
+                    ? (searchQuery ? "No matching files found." : "Your Vault is empty.")
+                    : (searchQuery ? "No matching credentials found." : "No credentials saved.")
+                  }
+                </Text>
               </View>
             }
           />
@@ -497,7 +756,7 @@ export default function VaultScreen({ route, navigation }) {
       {/* FAB */}
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: theme.primary }]}
-        onPress={handleUpload}
+        onPress={handleFabPress}
         disabled={isUploading}
       >
         {isUploading ? (
@@ -525,7 +784,7 @@ export default function VaultScreen({ route, navigation }) {
         }
       />
 
-      {/* Action Menu Bottom Sheet */}
+      {/* Action Menu Bottom Sheet (Files) */}
       <Modal visible={isActionMenuVisible} transparent animationType="slide">
         <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={() => setIsActionMenuVisible(false)}>
           <Animated.View
@@ -570,6 +829,299 @@ export default function VaultScreen({ route, navigation }) {
         </TouchableOpacity>
       </Modal>
 
+      {/* Credential Details Bottom Sheet */}
+      <Modal visible={isDetailsVisible} transparent animationType="slide">
+        <TouchableOpacity style={styles.sheetOverlay} activeOpacity={1} onPress={closeDetails}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ width: '100%' }}
+          >
+            <View style={[styles.bottomSheet, { backgroundColor: theme.surface, maxHeight: '85%' }]}>
+              <TouchableOpacity activeOpacity={1}>
+                {/* Header */}
+                <View style={styles.detailsHeader}>
+                  <Text style={[styles.detailsTitle, { color: theme.text }]}>{decryptedCredential?.title}</Text>
+                  <Text style={[styles.detailsType, { color: theme.primary }]}>
+                    {decryptedCredential?.type.replace('_', ' ')}
+                  </Text>
+                </View>
+
+                <ScrollView style={{ maxHeight: 380, marginVertical: 12 }} keyboardShouldPersistTaps="handled">
+                  {decryptedCredential?.type === 'PASSWORD' && decryptedCredential.data && (
+                    <View>
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Username / Email</Text>
+                          <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.username || 'None'}</Text>
+                        </View>
+                        {decryptedCredential.data.username ? (
+                          <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.username, 'Username')}>
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Password</Text>
+                          <Text style={[styles.detailValue, { color: theme.text, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }]}>
+                            {showSecrets['password'] ? decryptedCredential.data.password : '••••••••••••'}
+                          </Text>
+                        </View>
+                        {decryptedCredential.data.password ? (
+                          <View style={{ flexDirection: 'row', gap: 16 }}>
+                            <TouchableOpacity onPress={() => setShowSecrets(prev => ({ ...prev, password: !prev.password }))}>
+                              <MaterialCommunityIcons name={showSecrets['password'] ? "eye-off" : "eye"} size={20} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.password, 'Password')}>
+                              <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      {decryptedCredential.data.websiteUrl ? (
+                        <View style={styles.detailRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Website URL</Text>
+                            <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.websiteUrl}</Text>
+                          </View>
+                          <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.websiteUrl, 'URL')}>
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
+
+                  {decryptedCredential?.type === 'CARD' && decryptedCredential.data && (
+                    <View>
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Cardholder Name</Text>
+                          <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.cardholderName || 'None'}</Text>
+                        </View>
+                        {decryptedCredential.data.cardholderName ? (
+                          <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.cardholderName, 'Cardholder')}>
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Card Number</Text>
+                          <Text style={[styles.detailValue, { color: theme.text, letterSpacing: 1.5 }]}>
+                            {showSecrets['cardNum'] ? decryptedCredential.data.cardNumber : decryptedCredential.data.cardNumber?.replace(/.(?=.{4})/g, "*")}
+                          </Text>
+                        </View>
+                        {decryptedCredential.data.cardNumber ? (
+                          <View style={{ flexDirection: 'row', gap: 16 }}>
+                            <TouchableOpacity onPress={() => setShowSecrets(prev => ({ ...prev, cardNum: !prev.cardNum }))}>
+                              <MaterialCommunityIcons name={showSecrets['cardNum'] ? "eye-off" : "eye"} size={20} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.cardNumber, 'Card Number')}>
+                              <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.row}>
+                        <View style={[styles.detailRow, { flex: 1, marginRight: 12 }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Expiry</Text>
+                            <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.cardExpiry || 'None'}</Text>
+                          </View>
+                        </View>
+                        <View style={[styles.detailRow, { flex: 1 }]}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>CVV</Text>
+                            <Text style={[styles.detailValue, { color: theme.text }]}>
+                              {showSecrets['cvv'] ? decryptedCredential.data.cardCvv : '•••'}
+                            </Text>
+                          </View>
+                          {decryptedCredential.data.cardCvv ? (
+                            <View style={{ flexDirection: 'row', gap: 12 }}>
+                              <TouchableOpacity onPress={() => setShowSecrets(prev => ({ ...prev, cvv: !prev.cvv }))}>
+                                <MaterialCommunityIcons name={showSecrets['cvv'] ? "eye-off" : "eye"} size={18} color={theme.textSecondary} />
+                              </TouchableOpacity>
+                              <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.cardCvv, 'CVV')}>
+                                <MaterialCommunityIcons name="content-copy" size={18} color={theme.primary} />
+                              </TouchableOpacity>
+                            </View>
+                          ) : null}
+                        </View>
+                      </View>
+
+                      {decryptedCredential.data.cardPin ? (
+                        <View style={styles.detailRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Card PIN</Text>
+                            <Text style={[styles.detailValue, { color: theme.text }]}>
+                              {showSecrets['cardPin'] ? decryptedCredential.data.cardPin : '••••'}
+                            </Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 16 }}>
+                            <TouchableOpacity onPress={() => setShowSecrets(prev => ({ ...prev, cardPin: !prev.cardPin }))}>
+                              <MaterialCommunityIcons name={showSecrets['cardPin'] ? "eye-off" : "eye"} size={20} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.cardPin, 'Card PIN')}>
+                              <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
+
+                  {decryptedCredential?.type === 'BANK' && decryptedCredential.data && (
+                    <View>
+                      {decryptedCredential.data.bankName ? (
+                        <View style={styles.detailRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Bank Name</Text>
+                            <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.bankName}</Text>
+                          </View>
+                        </View>
+                      ) : null}
+
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Account Holder Name</Text>
+                          <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.accountHolderName || 'None'}</Text>
+                        </View>
+                        {decryptedCredential.data.accountHolderName ? (
+                          <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.accountHolderName, 'Holder Name')}>
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Account Number</Text>
+                          <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.accountNumber || 'None'}</Text>
+                        </View>
+                        {decryptedCredential.data.accountNumber ? (
+                          <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.accountNumber, 'Account Number')}>
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Routing Number / IBAN</Text>
+                          <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.routingNumber || 'None'}</Text>
+                        </View>
+                        {decryptedCredential.data.routingNumber ? (
+                          <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.routingNumber, 'Routing/IBAN')}>
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {decryptedCredential.data.bankSwift ? (
+                        <View style={styles.detailRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>SWIFT / BIC</Text>
+                            <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.bankSwift}</Text>
+                          </View>
+                          <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.bankSwift, 'SWIFT')}>
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                    </View>
+                  )}
+
+                  {decryptedCredential?.type === 'RECOVERY_CODE' && decryptedCredential.data && (
+                    <View>
+                      {decryptedCredential.data.serviceName ? (
+                        <View style={styles.detailRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Service</Text>
+                            <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.serviceName}</Text>
+                          </View>
+                        </View>
+                      ) : null}
+
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Recovery Codes</Text>
+                          <Text style={[styles.detailValue, styles.codeBlock, { color: theme.text, backgroundColor: theme.background, borderColor: theme.border }]}>
+                            {decryptedCredential.data.recoveryCodes || 'None'}
+                          </Text>
+                        </View>
+                        {decryptedCredential.data.recoveryCodes ? (
+                          <TouchableOpacity
+                            style={{ alignSelf: 'flex-start', marginTop: 12 }}
+                            onPress={() => copyToClipboard(decryptedCredential.data.recoveryCodes, 'Recovery Codes')}
+                          >
+                            <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+                  )}
+
+                  {decryptedCredential?.type === 'PIN' && decryptedCredential.data && (
+                    <View>
+                      <View style={styles.detailRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>PIN Code</Text>
+                          <Text style={[styles.detailValue, { color: theme.text, fontSize: 18, letterSpacing: 2 }]}>
+                            {showSecrets['pinValue'] ? decryptedCredential.data.pinValue : '••••'}
+                          </Text>
+                        </View>
+                        {decryptedCredential.data.pinValue ? (
+                          <View style={{ flexDirection: 'row', gap: 16 }}>
+                            <TouchableOpacity onPress={() => setShowSecrets(prev => ({ ...prev, pinValue: !prev.pinValue }))}>
+                              <MaterialCommunityIcons name={showSecrets['pinValue'] ? "eye-off" : "eye"} size={20} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => copyToClipboard(decryptedCredential.data.pinValue, 'PIN')}>
+                              <MaterialCommunityIcons name="content-copy" size={20} color={theme.primary} />
+                            </TouchableOpacity>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                  )}
+
+                  {decryptedCredential?.data && decryptedCredential.data.notes ? (
+                    <View style={[styles.detailRow, { borderBottomWidth: 0 }]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Notes</Text>
+                        <Text style={[styles.detailValue, { color: theme.text }]}>{decryptedCredential.data.notes}</Text>
+                      </View>
+                    </View>
+                  ) : null}
+                </ScrollView>
+
+                {/* Actions */}
+                <View style={styles.detailsActions}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { borderColor: theme.border }]}
+                    onPress={() => handleEditCredential(decryptedCredential)}
+                  >
+                    <MaterialCommunityIcons name="pencil" size={20} color={theme.text} style={{ marginRight: 6 }} />
+                    <Text style={[styles.actionBtnText, { color: theme.text }]}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { borderColor: theme.border }]}
+                    onPress={() => handleDeleteCredential(decryptedCredential)}
+                  >
+                    <MaterialCommunityIcons name="delete" size={20} color="#ff3b30" style={{ marginRight: 6 }} />
+                    <Text style={[styles.actionBtnText, { color: '#ff3b30' }]}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Rename Modal */}
       <Modal visible={isRenameModalVisible} transparent animationType="fade">
         <BlurView intensity={30} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
@@ -602,6 +1154,15 @@ export default function VaultScreen({ route, navigation }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Custom Alert Info Modal */}
+      <AlertModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        icon={infoModal.icon}
+        onClose={() => setInfoModal(prev => ({ ...prev, visible: false }))}
+      />
 
     </SafeAreaView>
   );
@@ -753,5 +1314,102 @@ const styles = StyleSheet.create({
   },
   sheetButtonText: {
     fontSize: 16,
-  }
+  },
+  // Tab container styles
+  tabContainer: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabButtonText: {
+    fontSize: 15,
+    fontWeight: 'bold',
+  },
+  // Details Sheet styles
+  detailsHeader: {
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#ccc',
+    paddingBottom: 12,
+  },
+  detailsTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  detailsType: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 4,
+    textTransform: 'uppercase',
+  },
+  detailRow: {
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eee',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  detailLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  detailValue: {
+    fontSize: 16,
+  },
+  codeBlock: {
+    borderWidth: 1,
+    borderRadius: 6,
+    padding: 10,
+    marginTop: 4,
+  },
+  row: {
+    flexDirection: 'row',
+  },
+  detailsActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+    gap: 12,
+  },
+  actionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingVertical: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionBtnText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    margin: 16,
+    paddingHorizontal: 12,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    height: '100%',
+  },
 });

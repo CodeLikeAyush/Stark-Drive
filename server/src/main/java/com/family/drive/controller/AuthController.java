@@ -41,10 +41,25 @@ public class AuthController {
     }
 
     @PutMapping("/vault-setup")
-    public ResponseEntity<Void> setupVault(@AuthenticationPrincipal User user) {
-        service.setupVault(user);
+    public ResponseEntity<Void> setupVault(
+            @org.springframework.web.bind.annotation.RequestBody java.util.Map<String, String> request,
+            @AuthenticationPrincipal User user
+    ) {
+        String encryptedVaultKey = request.get("encryptedVaultKey");
+        service.setupVault(encryptedVaultKey, user);
         return ResponseEntity.ok().build();
     }
+
+    @PutMapping("/vault-key")
+    public ResponseEntity<Void> updateVaultKey(
+            @org.springframework.web.bind.annotation.RequestBody java.util.Map<String, String> request,
+            @AuthenticationPrincipal User user
+    ) {
+        String newEncryptedKey = request.get("encryptedVaultKey");
+        service.updateVaultKey(newEncryptedKey, user);
+        return ResponseEntity.ok().build();
+    }
+
 
     @org.springframework.web.bind.annotation.GetMapping("/ping")
     public ResponseEntity<String> ping() {

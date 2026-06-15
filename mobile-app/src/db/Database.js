@@ -60,7 +60,16 @@ export const initDB = async () => {
         photo_id TEXT NOT NULL,
         PRIMARY KEY (album_id, photo_id)
       );
+
+      CREATE TABLE IF NOT EXISTS credentials (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL,
+        encrypted_data TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
+
 
     // Migration: Add has_thumbnail column to files table if it doesn't exist
     try {
@@ -250,3 +259,30 @@ export const deleteAlbumCache = async (albumId) => {
   await database.runAsync(`DELETE FROM albums WHERE id = ?`, [albumId.toString()]);
   await database.runAsync(`DELETE FROM album_photos WHERE album_id = ?`, [albumId.toString()]);
 };
+
+// --- Credentials ---
+
+export const upsertCredentialCache = async (cred) => {
+  const database = getDB();
+  await database.runAsync(
+    `INSERT INTO credentials (id, title, type, encrypted_data, updated_at) 
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET 
+       title=excluded.title, 
+       type=excluded.type, 
+       encrypted_data=excluded.encrypted_data, 
+       updated_at=excluded.updated_at`,
+    [cred.id.toString(), cred.title, cred.type, cred.encryptedData, cred.updatedAt]
+  );
+};
+
+export const getCredentials = async () => {
+  const database = getDB();
+  return await database.getAllAsync(`SELECT * FROM credentials ORDER BY title ASC`);
+};
+
+export const deleteCredential = async (id) => {
+  const database = getDB();
+  await database.runAsync(`DELETE FROM credentials WHERE id = ?`, [id.toString()]);
+};
+

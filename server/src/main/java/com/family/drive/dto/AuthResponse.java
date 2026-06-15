@@ -5,13 +5,15 @@ public class AuthResponse {
     private String email;
     private String name;
     private boolean hasVaultSetup;
+    private String encryptedVaultKey;
 
     public AuthResponse() {}
-    public AuthResponse(String token, String email, String name, boolean hasVaultSetup) {
+    public AuthResponse(String token, String email, String name, boolean hasVaultSetup, String encryptedVaultKey) {
         this.token = token;
         this.email = email;
         this.name = name;
         this.hasVaultSetup = hasVaultSetup;
+        this.encryptedVaultKey = encryptedVaultKey;
     }
 
     public String getToken() { return token; }
@@ -22,4 +24,7 @@ public class AuthResponse {
     public void setName(String name) { this.name = name; }
     public boolean isHasVaultSetup() { return hasVaultSetup; }
     public void setHasVaultSetup(boolean hasVaultSetup) { this.hasVaultSetup = hasVaultSetup; }
+    public String getEncryptedVaultKey() { return encryptedVaultKey; }
+    public void setEncryptedVaultKey(String encryptedVaultKey) { this.encryptedVaultKey = encryptedVaultKey; }
 }
+

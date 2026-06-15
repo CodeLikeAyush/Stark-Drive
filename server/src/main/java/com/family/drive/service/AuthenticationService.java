@@ -40,7 +40,7 @@ public class AuthenticationService {
         );
         repository.save(user);
         var jwtToken = jwtService.generateToken(user);
-        return new AuthResponse(jwtToken, user.getEmail(), user.getName(), user.isHasVaultSetup());
+        return new AuthResponse(jwtToken, user.getEmail(), user.getName(), user.isHasVaultSetup(), user.getEncryptedVaultKey());
     }
 
     public AuthResponse authenticate(AuthRequest request) {
@@ -53,7 +53,7 @@ public class AuthenticationService {
         var user = repository.findByEmail(request.getEmail())
                 .orElseThrow();
         var jwtToken = jwtService.generateToken(user);
-        return new AuthResponse(jwtToken, user.getEmail(), user.getName(), user.isHasVaultSetup());
+        return new AuthResponse(jwtToken, user.getEmail(), user.getName(), user.isHasVaultSetup(), user.getEncryptedVaultKey());
     }
 
     public void updateName(UpdateNameRequest request, User user) {
@@ -61,8 +61,15 @@ public class AuthenticationService {
         repository.save(user);
     }
 
-    public void setupVault(User user) {
+    public void setupVault(String encryptedVaultKey, User user) {
         user.setHasVaultSetup(true);
+        user.setEncryptedVaultKey(encryptedVaultKey);
+        repository.save(user);
+    }
+
+    public void updateVaultKey(String newEncryptedKey, User user) {
+        user.setEncryptedVaultKey(newEncryptedKey);
         repository.save(user);
     }
 }
+

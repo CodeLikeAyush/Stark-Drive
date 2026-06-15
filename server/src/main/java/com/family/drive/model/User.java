@@ -32,6 +32,9 @@ public class User implements UserDetails {
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean hasVaultSetup = false;
 
+    @Column(name = "encrypted_vault_key", nullable = true, length = 1000)
+    private String encryptedVaultKey;
+
     public User() {}
 
     public User(String email, String password, Role role, String name) {
@@ -40,6 +43,7 @@ public class User implements UserDetails {
         this.role = role;
         this.name = name;
         this.hasVaultSetup = false;
+        this.encryptedVaultKey = null;
     }
 
     // Getters and Setters
@@ -47,7 +51,10 @@ public class User implements UserDetails {
     public void setId(Long id) { this.id = id; }
     public boolean isHasVaultSetup() { return hasVaultSetup; }
     public void setHasVaultSetup(boolean hasVaultSetup) { this.hasVaultSetup = hasVaultSetup; }
+    public String getEncryptedVaultKey() { return encryptedVaultKey; }
+    public void setEncryptedVaultKey(String encryptedVaultKey) { this.encryptedVaultKey = encryptedVaultKey; }
     public String getEmail() { return email; }
+
     public void setEmail(String email) { this.email = email; }
     public void setPassword(String password) { this.password = password; }
     public Role getRole() { return role; }

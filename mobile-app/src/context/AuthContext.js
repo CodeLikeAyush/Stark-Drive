@@ -12,6 +12,8 @@ export const AuthContext = createContext({
   isOfflineMode: false,
   autoBackupEnabled: false,
   backupAlbums: [],
+  hasVaultSetup: false,
+  encryptedVaultKey: null,
   setAutoBackupEnabled: async (enabled) => {},
   setBackupAlbums: async (albums) => {},
   login: async (email, password) => {},
@@ -21,6 +23,8 @@ export const AuthContext = createContext({
   signOut: async () => {},
   updateName: async (name) => {},
   setHasVaultSetup: async (value) => {},
+  setEncryptedVaultKey: async (value) => {},
+  syncVaultKey: async (newEncryptedKey) => {},
   serverUrl: null,
   connectServer: async (url) => {},
   disconnectServer: async () => {},
@@ -32,14 +36,16 @@ export const AuthProvider = ({ children }) => {
   const [userName, setUserName] = useState(null);
   const [userEmail, setUserEmail] = useState(null);
   const [hasVaultSetup, setHasVaultSetup] = useState(false);
+  const [encryptedVaultKey, setEncryptedVaultKey] = useState(null);
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
   const [backupAlbums, setBackupAlbums] = useState([]);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+
   useEffect(() => {
     const bootstrapAsync = async () => {
-      let url, token, name, email, vaultSetupStr;
+      let url, token, name, email, vaultSetupStr, cachedEncryptedVaultKey;
       let backupEnabledStr, albumsStr;
       try {
         await initDB();
@@ -48,6 +54,7 @@ export const AuthProvider = ({ children }) => {
         name = await SecureStore.getItemAsync('userName');
         email = await SecureStore.getItemAsync('userEmail');
         vaultSetupStr = await SecureStore.getItemAsync('hasVaultSetup');
+        cachedEncryptedVaultKey = await SecureStore.getItemAsync('encryptedVaultKey');
         
         backupEnabledStr = await SecureStore.getItemAsync('autoBackupEnabled');
         albumsStr = await SecureStore.getItemAsync('backupAlbums');
@@ -66,6 +73,7 @@ export const AuthProvider = ({ children }) => {
         setUserName(name);
         setUserEmail(email);
         setHasVaultSetup(vaultSetupStr === 'true');
+        setEncryptedVaultKey(cachedEncryptedVaultKey || null);
       }
       
       if (backupEnabledStr === 'true') {
@@ -135,31 +143,35 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     const res = await client.post('/auth/authenticate', { email, password });
-    const { token, email: resEmail, name, hasVaultSetup: serverHasVault } = res.data;
+    const { token, email: resEmail, name, hasVaultSetup: serverHasVault, encryptedVaultKey: serverVaultKey } = res.data;
     await SecureStore.setItemAsync('userToken', token);
     await SecureStore.setItemAsync('userEmail', resEmail || email);
     if (name) await SecureStore.setItemAsync('userName', name);
     await SecureStore.setItemAsync('hasVaultSetup', serverHasVault ? 'true' : 'false');
+    await SecureStore.setItemAsync('encryptedVaultKey', serverVaultKey || '');
     
     setUserToken(token);
     setUserEmail(resEmail || email);
     setUserName(name || null);
     setHasVaultSetup(!!serverHasVault);
+    setEncryptedVaultKey(serverVaultKey || null);
     client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   };
 
   const register = async (email, password, name) => {
     const res = await client.post('/auth/register', { email, password, name });
-    const { token, email: resEmail, name: resName, hasVaultSetup: serverHasVault } = res.data;
+    const { token, email: resEmail, name: resName, hasVaultSetup: serverHasVault, encryptedVaultKey: serverVaultKey } = res.data;
     await SecureStore.setItemAsync('userToken', token);
     await SecureStore.setItemAsync('userEmail', resEmail || email);
     if (resName) await SecureStore.setItemAsync('userName', resName);
     await SecureStore.setItemAsync('hasVaultSetup', serverHasVault ? 'true' : 'false');
+    await SecureStore.setItemAsync('encryptedVaultKey', serverVaultKey || '');
     
     setUserToken(token);
     setUserEmail(resEmail || email);
     setUserName(resName || null);
     setHasVaultSetup(!!serverHasVault);
+    setEncryptedVaultKey(serverVaultKey || null);
     client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   };
 
@@ -188,28 +200,52 @@ export const AuthProvider = ({ children }) => {
     setHasVaultSetup(value);
   };
 
+  const updateEncryptedVaultKey = async (value) => {
+    try {
+      if (value) {
+        await SecureStore.setItemAsync('encryptedVaultKey', value);
+      } else {
+        await SecureStore.deleteItemAsync('encryptedVaultKey');
+      }
+    } catch (e) {
+      console.warn("SecureStore error saving encryptedVaultKey", e);
+    }
+    setEncryptedVaultKey(value);
+  };
+
+  const syncVaultKey = async (newEncryptedKey) => {
+    await client.put('/auth/vault-key', { encryptedVaultKey: newEncryptedKey });
+    await updateEncryptedVaultKey(newEncryptedKey);
+  };
+
   const logout = async () => {
     await SecureStore.deleteItemAsync('userToken');
     await SecureStore.deleteItemAsync('userEmail');
     await SecureStore.deleteItemAsync('userName');
     await SecureStore.deleteItemAsync('hasVaultSetup');
+    await SecureStore.deleteItemAsync('encryptedVaultKey');
+    await SecureStore.deleteItemAsync('vault_master_key');
     setUserToken(null);
     setUserEmail(null);
     setUserName(null);
     setHasVaultSetup(false);
+    setEncryptedVaultKey(null);
     delete client.defaults.headers.common['Authorization'];
   };
 
   return (
     <AuthContext.Provider value={{ 
-      userToken, userEmail, userName, isLoading, isOfflineMode, autoBackupEnabled, backupAlbums, hasVaultSetup, serverUrl,
+      userToken, userEmail, userName, isLoading, isOfflineMode, autoBackupEnabled, backupAlbums, hasVaultSetup, encryptedVaultKey, serverUrl,
       login, register, logout, updateUserName, 
       setAutoBackupEnabled: updateAutoBackupEnabled, 
       setBackupAlbums: updateBackupAlbums,
       setHasVaultSetup: updateHasVaultSetup,
+      setEncryptedVaultKey: updateEncryptedVaultKey,
+      syncVaultKey,
       connectServer, disconnectServer
     }}>
       {children}
     </AuthContext.Provider>
   );
 };
+
