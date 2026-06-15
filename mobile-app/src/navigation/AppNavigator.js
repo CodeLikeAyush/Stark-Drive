@@ -226,7 +226,8 @@ export default function AppNavigator() {
           options={{ 
             headerShown: true, 
             title: 'Albums',
-            headerStyle: { backgroundColor: theme.surface },
+            headerStyle: { backgroundColor: theme.background },
+            headerShadowVisible: false,
             headerTintColor: theme.text
           }} 
         />
@@ -235,7 +236,9 @@ export default function AppNavigator() {
           component={AlbumDetailsScreen} 
           options={{ 
             headerShown: true,
-            headerStyle: { backgroundColor: theme.surface },
+            headerTitle: '',
+            headerStyle: { backgroundColor: theme.background },
+            headerShadowVisible: false,
             headerTintColor: theme.text
           }} 
         />

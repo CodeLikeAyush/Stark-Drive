@@ -82,6 +82,15 @@ public class AlbumService {
         return mapToDetails(album);
     }
 
+    public AlbumDetailsResponse updateAlbum(Long id, AlbumRequest request, User user) {
+        Album album = albumRepository.findByIdAndUser(id, user)
+            .orElseThrow(() -> new RuntimeException("Album not found"));
+        album.setName(request.getName());
+        album.setDescription(request.getDescription());
+        Album saved = albumRepository.save(album);
+        return mapToDetails(saved);
+    }
+
     public void deleteAlbum(Long id, User user) {
         Album album = albumRepository.findByIdAndUser(id, user)
             .orElseThrow(() -> new RuntimeException("Album not found"));

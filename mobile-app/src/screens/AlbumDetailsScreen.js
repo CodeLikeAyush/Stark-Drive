@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, useWindowDimensions, ActivityIndicator, RefreshControl, Modal, Animated } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Image, useWindowDimensions, ActivityIndicator, RefreshControl, Modal, Animated, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { ThemeContext } from '../theme/ThemeContext';
 import { AuthContext } from '../context/AuthContext';
-import { getCachedAlbumPhotos, upsertAlbumPhotosCache, upsertAlbumCache, deleteAlbumCache, upsertPhotoCache } from '../db/Database';
+import { useMediaBackup } from '../hooks/useMediaBackup';
+import { getCachedAlbumPhotos, getCachedAlbum, upsertAlbumPhotosCache, upsertAlbumCache, deleteAlbumCache, upsertPhotoCache } from '../db/Database';
 import client from '../api/client';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import ConfirmModal from '../components/ConfirmModal';
@@ -14,7 +15,8 @@ import { FlashList } from '@shopify/flash-list';
 export default function AlbumDetailsScreen({ route, navigation }) {
   const { albumId, albumName } = route.params;
   const { theme, isDark } = useContext(ThemeContext);
-  const { isOfflineMode, userToken, photos: timelinePhotos } = useContext(AuthContext);
+  const { isOfflineMode, userToken } = useContext(AuthContext);
+  const { photos: timelinePhotos } = useMediaBackup();
 
   const [album, setAlbum] = useState(null);
   const [photos, setPhotos] = useState([]);
@@ -35,10 +37,17 @@ export default function AlbumDetailsScreen({ route, navigation }) {
   // Delete/Remove Alerts
   const [alertData, setAlertData] = useState({ visible: false, title: '', message: '', confirmText: 'OK', onConfirm: null, confirmStyle: 'default' });
 
+  // Edit Album State
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editAlbumName, setEditAlbumName] = useState('');
+  const [editAlbumDesc, setEditAlbumDesc] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
   const { width } = useWindowDimensions();
 
   // Grid scaling
   const getColumnCount = () => {
+    if (width > 1200) return 9;
     if (width > 900) return 7;
     if (width > 600) return 5;
     return 3;
@@ -48,9 +57,12 @@ export default function AlbumDetailsScreen({ route, navigation }) {
   const imageSize = (width - spacing * (numColumns - 1)) / numColumns;
 
   useEffect(() => {
-    navigation.setOptions({ title: albumName || 'Album' });
     loadAlbumDetails();
   }, [albumId]);
+
+  useEffect(() => {
+    navigation.setOptions({ title: '' });
+  }, []);
 
   const loadAlbumDetails = async (isRef = false) => {
     if (!isRef) setLoading(true);
@@ -78,6 +90,19 @@ export default function AlbumDetailsScreen({ route, navigation }) {
         };
       });
       setPhotos(mapped);
+
+      // Load cached album summary details
+      const cachedAlb = await getCachedAlbum(albumId);
+      if (cachedAlb) {
+        setAlbum({
+          id: cachedAlb.id,
+          name: cachedAlb.name,
+          description: cachedAlb.description,
+          coverPhotoId: cachedAlb.cover_photo_id,
+          photoCount: cachedAlb.photo_count,
+          creationTime: cachedAlb.creation_time
+        });
+      }
     } catch (e) {
       console.warn("Failed to load cached album photos", e);
     } finally {
@@ -205,6 +230,64 @@ export default function AlbumDetailsScreen({ route, navigation }) {
         title: "Error",
         message: "Failed to remove photo."
       });
+    }
+  };
+
+  const openEditAlbum = () => {
+    if (isOfflineMode) {
+      setAlertData({
+        visible: true,
+        title: "Offline Mode",
+        message: "You cannot edit albums while offline."
+      });
+      return;
+    }
+    setEditAlbumName(album?.name || albumName || '');
+    setEditAlbumDesc(album?.description || '');
+    setShowEditModal(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editAlbumName.trim()) {
+      setAlertData({
+        visible: true,
+        title: "Required",
+        message: "Please enter an album name."
+      });
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      const res = await client.put(`/albums/${albumId}`, {
+        name: editAlbumName,
+        description: editAlbumDesc
+      });
+      
+      const updated = res.data;
+      setAlbum(updated);
+      
+      // Update local SQLite cache
+      await upsertAlbumCache({
+        id: albumId.toString(),
+        name: updated.name,
+        description: updated.description,
+        coverPhotoId: photos.length > 0 ? photos[0].remoteFileId : null,
+        photoCount: photos.length,
+        creationTime: updated.creationTime
+      });
+
+      navigation.setParams({ albumName: updated.name });
+      setShowEditModal(false);
+    } catch (e) {
+      console.error(e);
+      setAlertData({
+        visible: true,
+        title: "Error",
+        message: "Failed to update album."
+      });
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -354,7 +437,7 @@ export default function AlbumDetailsScreen({ route, navigation }) {
           }
           ListHeaderComponent={
             <View style={[styles.headerSection, { borderBottomColor: theme.border }]}>
-              <Text style={[styles.albumTitle, { color: theme.text }]}>{albumName}</Text>
+              <Text style={[styles.albumTitle, { color: theme.text }]}>{album?.name || albumName}</Text>
               {album?.description ? (
                 <Text style={[styles.albumDesc, { color: theme.textSecondary }]}>{album.description}</Text>
               ) : null}
@@ -365,9 +448,13 @@ export default function AlbumDetailsScreen({ route, navigation }) {
                   <Ionicons name="add" size={18} color="#fff" style={{ marginRight: 4 }} />
                   <Text style={styles.actionBtnText}>Add Photos</Text>
                 </TouchableOpacity>
+                <TouchableOpacity style={[styles.actionBtn, { backgroundColor: theme.border }]} onPress={openEditAlbum}>
+                  <Ionicons name="pencil-outline" size={18} color={theme.text} style={{ marginRight: 4 }} />
+                  <Text style={[styles.actionBtnText, { color: theme.text }]}>Edit Details</Text>
+                </TouchableOpacity>
                 <TouchableOpacity style={[styles.actionBtn, { backgroundColor: theme.border }]} onPress={handleDeleteAlbum}>
                   <Ionicons name="trash-outline" size={18} color={theme.text} style={{ marginRight: 4 }} />
-                  <Text style={[styles.actionBtnText, { color: theme.text }]}>Delete Album</Text>
+                  <Text style={[styles.actionBtnText, { color: theme.text }]}>Delete</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -448,7 +535,8 @@ export default function AlbumDetailsScreen({ route, navigation }) {
                 estimatedItemSize={120}
                 renderItem={({ item }) => {
                   const isSelected = selectedForAlbum.has(item.id);
-                  const pSize = width / 3 - 2;
+                  const modalWidth = Math.min(width, 600);
+                  const pSize = modalWidth / 3 - 2;
                   return (
                     <TouchableOpacity
                       style={{ width: pSize, height: pSize, margin: 1, position: 'relative' }}
@@ -469,6 +557,47 @@ export default function AlbumDetailsScreen({ route, navigation }) {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Edit Album Details Modal */}
+      <Modal visible={showEditModal} transparent animationType="slide" onRequestClose={() => setShowEditModal(false)}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          style={styles.sheetOverlay}
+        >
+          <View style={[styles.modalSheet, { backgroundColor: theme.background, height: 'auto', maxHeight: '80%', paddingBottom: 20 }]}>
+            <View style={[styles.sheetHeader, { borderBottomColor: theme.border }]}>
+              <TouchableOpacity onPress={() => setShowEditModal(false)} style={{ padding: 8 }}>
+                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.sheetTitle, { color: theme.text }]}>Edit Album</Text>
+              <TouchableOpacity onPress={handleSaveEdit} style={{ padding: 8 }} disabled={isSavingEdit}>
+                {isSavingEdit ? (
+                  <ActivityIndicator size="small" color={theme.primary} />
+                ) : (
+                  <Text style={{ color: theme.primary, fontWeight: 'bold', fontSize: 16 }}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.formContainer} keyboardShouldPersistTaps="handled">
+              <TextInput
+                style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.surface }]}
+                placeholder="Album Name"
+                placeholderTextColor={theme.textSecondary}
+                value={editAlbumName}
+                onChangeText={setEditAlbumName}
+              />
+              <TextInput
+                style={[styles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.surface }]}
+                placeholder="Description (Optional)"
+                placeholderTextColor={theme.textSecondary}
+                value={editAlbumDesc}
+                onChangeText={setEditAlbumDesc}
+              />
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <ConfirmModal
@@ -511,6 +640,9 @@ const styles = StyleSheet.create({
   headerSection: {
     padding: 24,
     borderBottomWidth: 1,
+    maxWidth: 800,
+    alignSelf: 'center',
+    width: '100%',
   },
   albumTitle: {
     fontSize: 28,
@@ -576,6 +708,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalSheet: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     height: '80%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
@@ -598,5 +733,16 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     alignItems: 'flex-end',
     padding: 6,
+  },
+  formContainer: {
+    padding: 16,
+    gap: 12,
+  },
+  input: {
+    height: 48,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
   },
 });

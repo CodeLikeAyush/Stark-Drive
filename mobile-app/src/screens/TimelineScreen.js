@@ -1,12 +1,12 @@
 import React, { useContext, useMemo, useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ActivityIndicator, Modal, Switch, FlatList, PanResponder, Animated, Alert, useWindowDimensions, TextInput } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ActivityIndicator, Modal, Switch, FlatList, PanResponder, Animated, Alert, useWindowDimensions, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { FlashList } from '@shopify/flash-list';
 import { ThemeContext } from '../theme/ThemeContext';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useMediaBackup } from '../hooks/useMediaBackup';
 import { AuthContext } from '../context/AuthContext';
-import { getPhotos, upsertPhotoCache, markPhotoAvailableOffline, markPhotoNotAvailableOffline, getCachedAlbums, upsertAlbumCache, upsertAlbumPhotosCache } from '../db/Database';
+import { getPhotos, upsertPhotoCache, markPhotoAvailableOffline, markPhotoNotAvailableOffline, getCachedAlbums, getCachedAlbumPhotos, upsertAlbumCache, upsertAlbumPhotosCache } from '../db/Database';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -40,6 +40,10 @@ export default function TimelineScreen({ navigation, route }) {
   const [isCreatingAlbum, setIsCreatingAlbum] = useState(false);
   const [showAddToAlbumModal, setShowAddToAlbumModal] = useState(false);
   const [photosToAddToAlbum, setPhotosToAddToAlbum] = useState([]);
+  
+  // Custom bottom sheet actions menu state
+  const [showMoreActionsModal, setShowMoreActionsModal] = useState(false);
+  const [moreActionsTargetPhoto, setMoreActionsTargetPhoto] = useState(null);
 
   // Offline states
   const [offlinePhotos, setOfflinePhotos] = useState({});
@@ -102,7 +106,12 @@ export default function TimelineScreen({ navigation, route }) {
     FileSystem.getInfoAsync(OFFLINE_PHOTOS_DIR).then(dirInfo => {
       if (!dirInfo.exists) FileSystem.makeDirectoryAsync(OFFLINE_PHOTOS_DIR, { intermediates: true });
     });
-  }, [isOfflineMode]);
+
+    const unsubscribe = navigation.addListener('focus', () => {
+      fetchAlbums();
+    });
+    return unsubscribe;
+  }, [isOfflineMode, navigation]);
 
   useEffect(() => {
     if (route.params?.openCreateAlbum) {
@@ -397,9 +406,7 @@ export default function TimelineScreen({ navigation, route }) {
                     }
                   }}
                 >
-                  <View style={styles.albumCardHeaderIcon}>
-                    <Ionicons name="add" size={32} color={theme.primary} />
-                  </View>
+                  <Ionicons name="add" size={36} color={theme.primary} />
                   <Text style={[styles.albumCardHeaderTitle, { color: theme.text }]} numberOfLines={1}>
                     New Album
                   </Text>
@@ -413,9 +420,7 @@ export default function TimelineScreen({ navigation, route }) {
                   activeOpacity={0.8}
                   onPress={() => navigation.navigate('AllAlbums')}
                 >
-                  <View style={styles.albumCardHeaderIcon}>
-                    <MaterialCommunityIcons name="image-multiple-outline" size={32} color={theme.textSecondary} />
-                  </View>
+                  <MaterialCommunityIcons name="image-multiple-outline" size={32} color={theme.textSecondary} />
                   <Text style={[styles.albumCardHeaderTitle, { color: theme.text }]} numberOfLines={1}>
                     View All
                   </Text>
@@ -431,22 +436,21 @@ export default function TimelineScreen({ navigation, route }) {
                 activeOpacity={0.8}
                 onPress={() => navigation.navigate('AlbumDetails', { albumId: item.id, albumName: item.name })}
               >
-                <View style={styles.albumCardHeaderCover}>
-                  {coverUri ? (
-                    <Image
-                      source={{ uri: coverUri, headers: { Authorization: `Bearer ${userToken}` } }}
-                      style={styles.albumCardHeaderImage}
-                    />
-                  ) : (
-                    <MaterialCommunityIcons name="image-album" size={32} color={theme.textSecondary} />
-                  )}
-                  <View style={styles.albumCardHeaderBadge}>
-                    <Text style={styles.albumCardHeaderBadgeText}>{item.photoCount || 0}</Text>
+                {coverUri ? (
+                  <Image
+                    source={{ uri: coverUri, headers: { Authorization: `Bearer ${userToken}` } }}
+                    style={StyleSheet.absoluteFillObject}
+                  />
+                ) : (
+                  <View style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center', backgroundColor: theme.surface }]}>
+                    <MaterialCommunityIcons name="image-album" size={36} color={theme.textSecondary} />
                   </View>
+                )}
+                <View style={styles.albumTitleOverlay}>
+                  <Text style={styles.albumTitleOverlayText} numberOfLines={2}>
+                    {item.name}
+                  </Text>
                 </View>
-                <Text style={[styles.albumCardHeaderTitle, { color: theme.text }]} numberOfLines={1}>
-                  {item.name}
-                </Text>
               </TouchableOpacity>
             );
           }}
@@ -484,6 +488,18 @@ export default function TimelineScreen({ navigation, route }) {
     setPhotosToMove(selectedArr);
     setIsVaultPinModalVisible(true);
   };
+
+  const showMoreActionsSingle = (photo) => {
+    setMoreActionsTargetPhoto(photo);
+    setShowMoreActionsModal(true);
+  };
+
+  const showMoreActionsBatch = () => {
+    setMoreActionsTargetPhoto(null);
+    setShowMoreActionsModal(true);
+  };
+
+
 
   const confirmMovePhotosToVault = async (pin) => {
     setIsVaultPinModalVisible(false);
@@ -1094,13 +1110,8 @@ export default function TimelineScreen({ navigation, route }) {
               </TouchableOpacity>
             )}
             {selectedPhotos.size > 0 && (
-              <TouchableOpacity onPress={handleBatchAddToAlbum} style={{ padding: 8, marginRight: 8 }}>
-                <MaterialCommunityIcons name="folder-plus-outline" size={24} color="#fff" />
-              </TouchableOpacity>
-            )}
-            {selectedPhotos.size > 0 && (
-              <TouchableOpacity onPress={handleMoveSelectedPhotosToVault} style={{ padding: 8, marginRight: 8 }}>
-                <MaterialCommunityIcons name="safe" size={24} color="#fff" />
+              <TouchableOpacity onPress={showMoreActionsBatch} style={{ padding: 8, marginRight: 8 }}>
+                <Ionicons name="ellipsis-vertical" size={24} color="#fff" />
               </TouchableOpacity>
             )}
             <TouchableOpacity onPress={handleDeleteSelected} style={{ padding: 8 }}>
@@ -1475,14 +1486,9 @@ export default function TimelineScreen({ navigation, route }) {
                   </TouchableOpacity>
                 )}
 
-                <TouchableOpacity onPress={() => handleAddSinglePhotoToAlbum(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
-                  <MaterialCommunityIcons name="folder-plus-outline" size={24} color="#fff" />
-                  <Text style={styles.viewerFooterBtnText}>Add to Album</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity onPress={() => handleMoveSinglePhotoToVault(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
-                  <MaterialCommunityIcons name="safe" size={24} color="#fff" />
-                  <Text style={styles.viewerFooterBtnText}>Move to Vault</Text>
+                <TouchableOpacity onPress={() => showMoreActionsSingle(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
+                  <Ionicons name="ellipsis-horizontal" size={24} color="#fff" />
+                  <Text style={styles.viewerFooterBtnText}>More</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity onPress={() => handleDeletePhotoFromViewer(photos[selectedPhotoIndex])} style={styles.viewerFooterBtn}>
@@ -1497,7 +1503,10 @@ export default function TimelineScreen({ navigation, route }) {
 
       {/* Create Album Modal */}
       <Modal visible={showCreateAlbumModal} transparent animationType="slide" onRequestClose={() => setShowCreateAlbumModal(false)}>
-        <View style={styles.sheetOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          style={styles.sheetOverlay}
+        >
           <View style={[styles.modalSheet, { backgroundColor: theme.background }]}>
             <View style={[styles.sheetHeader, { borderBottomColor: theme.border }]}>
               <TouchableOpacity onPress={() => setShowCreateAlbumModal(false)} style={{ padding: 8 }}>
@@ -1539,7 +1548,8 @@ export default function TimelineScreen({ navigation, route }) {
                 estimatedItemSize={120}
                 renderItem={({ item }) => {
                   const isSelected = selectedForNewAlbum.has(item.id);
-                  const pSize = width / 3 - 2;
+                  const modalWidth = Math.min(width, 600);
+                  const pSize = modalWidth / 3 - 2;
                   return (
                     <TouchableOpacity
                       style={{ width: pSize, height: pSize, margin: 1, position: 'relative' }}
@@ -1566,7 +1576,7 @@ export default function TimelineScreen({ navigation, route }) {
               />
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Add to Album Chooser Modal */}
@@ -1627,6 +1637,62 @@ export default function TimelineScreen({ navigation, route }) {
             )}
           </View>
         </View>
+      </Modal>
+
+      {/* More Actions Bottom Sheet Modal */}
+      <Modal
+        visible={showMoreActionsModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowMoreActionsModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.sheetOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowMoreActionsModal(false)}
+        >
+          <View style={[styles.modalSheet, { backgroundColor: theme.background, height: 'auto', maxHeight: '50%', paddingBottom: 20 }]}>
+            <View style={[styles.sheetHeader, { borderBottomColor: theme.border }]}>
+              <View style={{ width: 60 }} />
+              <Text style={[styles.sheetTitle, { color: theme.text }]}>More</Text>
+              <TouchableOpacity onPress={() => setShowMoreActionsModal(false)} style={{ padding: 8 }}>
+                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 16, gap: 12 }}>
+              <TouchableOpacity
+                style={[styles.menuRowBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                onPress={() => {
+                  setShowMoreActionsModal(false);
+                  if (moreActionsTargetPhoto) {
+                    handleAddSinglePhotoToAlbum(moreActionsTargetPhoto);
+                  } else {
+                    handleBatchAddToAlbum();
+                  }
+                }}
+              >
+                <MaterialCommunityIcons name="folder-plus-outline" size={24} color={theme.text} />
+                <Text style={[styles.menuRowBtnText, { color: theme.text }]}>Add to Album</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.menuRowBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                onPress={() => {
+                  setShowMoreActionsModal(false);
+                  if (moreActionsTargetPhoto) {
+                    handleMoveSinglePhotoToVault(moreActionsTargetPhoto);
+                  } else {
+                    handleMoveSelectedPhotosToVault();
+                  }
+                }}
+              >
+                <MaterialCommunityIcons name="safe" size={24} color={theme.text} />
+                <Text style={[styles.menuRowBtnText, { color: theme.text }]}>Move to Vault</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       <VaultPinModal
@@ -1954,6 +2020,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
+  menuRowBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 12,
+  },
+  menuRowBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
@@ -1977,16 +2056,11 @@ const styles = StyleSheet.create({
   },
   albumCardHeader: {
     width: 100,
+    height: 130,
     borderRadius: 12,
     borderWidth: 1,
-    padding: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  albumCardHeaderIcon: {
-    width: 60,
-    height: 78,
-    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1995,35 +2069,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 8,
     textAlign: 'center',
-    width: '100%',
+    paddingHorizontal: 4,
   },
-  albumCardHeaderCover: {
-    width: 60,
-    height: 78,
-    borderRadius: 8,
-    overflow: 'hidden',
-    position: 'relative',
+  albumTitleOverlay: {
+    position: 'absolute',
+    bottom: 8,
+    left: 4,
+    right: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  albumCardHeaderImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  albumCardHeaderBadge: {
-    position: 'absolute',
-    bottom: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  albumCardHeaderBadgeText: {
+  albumTitleOverlayText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: 'bold',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
   },
   // Form and modals
   formContainer: {
@@ -2049,6 +2112,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalSheet: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     height: '80%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,

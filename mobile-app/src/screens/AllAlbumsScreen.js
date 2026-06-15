@@ -6,6 +6,7 @@ import { getCachedAlbums, upsertAlbumCache } from '../db/Database';
 import client from '../api/client';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import ConfirmModal from '../components/ConfirmModal';
+import { BlurView } from 'expo-blur';
 
 export default function AllAlbumsScreen({ navigation }) {
   const { theme, isDark } = useContext(ThemeContext);
@@ -15,10 +16,11 @@ export default function AllAlbumsScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [alertData, setAlertData] = useState({ visible: false, title: '', message: '' });
 
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
 
   // Responsive column counts
   const getColumnCount = () => {
+    if (width > 1200) return 6;
     if (width > 900) return 5;
     if (width > 600) return 3;
     return 2;
@@ -27,11 +29,16 @@ export default function AllAlbumsScreen({ navigation }) {
 
   useEffect(() => {
     loadAlbums();
-  }, []);
+
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadAlbums();
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   const loadAlbums = async (isRef = false) => {
-    if (!isRef) setLoading(true);
-    else setRefreshing(true);
+    if (!isRef && albums.length === 0) setLoading(true);
+    else if (isRef) setRefreshing(true);
 
     // 1. Load from local cache first
     try {
@@ -69,13 +76,18 @@ export default function AllAlbumsScreen({ navigation }) {
       });
       return;
     }
-    // Navigate back to Timeline and trigger the creation modal, or we can trigger it locally
-    // Proposed: Go to Timeline and pass a parameter to open create modal
-    navigation.navigate('TimelineTab', { openCreateAlbum: true });
+    // Navigate back to Timeline and trigger the creation modal
+    // React Navigation nested navigation syntax
+    navigation.navigate('Main', {
+      screen: 'TimelineTab',
+      params: { openCreateAlbum: true }
+    });
   };
 
   const renderAlbumItem = ({ item }) => {
     const cardWidth = (width - 32 - (numColumns - 1) * 16) / numColumns;
+    const isLandscape = width > height;
+    const boxHeight = isLandscape ? Math.min(cardWidth * 1.1, height * 0.4) : cardWidth * 1.3;
     const coverUri = item.coverPhotoId
       ? `${client.defaults.baseURL}/drive/thumbnail/${item.coverPhotoId}`
       : null;
@@ -86,7 +98,7 @@ export default function AllAlbumsScreen({ navigation }) {
         activeOpacity={0.8}
         onPress={() => navigation.navigate('AlbumDetails', { albumId: item.id, albumName: item.name })}
       >
-        <View style={[styles.imageContainer, { height: cardWidth * 1.3, backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View style={[styles.imageContainer, { height: boxHeight, backgroundColor: theme.surface, borderColor: theme.border }]}>
           {coverUri ? (
             <Image
               source={{ uri: coverUri, headers: { Authorization: `Bearer ${userToken}` } }}
@@ -97,18 +109,12 @@ export default function AllAlbumsScreen({ navigation }) {
               <MaterialCommunityIcons name="image-album" size={48} color={theme.textSecondary} />
             </View>
           )}
-          <View style={styles.photoCountBadge}>
-            <Text style={styles.photoCountText}>{item.photoCount || 0}</Text>
+          <View style={styles.albumTitleOverlay}>
+            <Text style={styles.albumTitleOverlayText} numberOfLines={2}>
+              {item.name}
+            </Text>
           </View>
         </View>
-        <Text style={[styles.albumName, { color: theme.text }]} numberOfLines={1}>
-          {item.name}
-        </Text>
-        {item.description ? (
-          <Text style={[styles.albumDesc, { color: theme.textSecondary }]} numberOfLines={1}>
-            {item.description}
-          </Text>
-        ) : null}
       </TouchableOpacity>
     );
   };
@@ -220,30 +226,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  photoCountBadge: {
+  albumTitleOverlay: {
     position: 'absolute',
-    bottom: 8,
+    bottom: 12,
+    left: 8,
     right: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  photoCountText: {
+  albumTitleOverlayText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: 'bold',
-  },
-  albumName: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    marginTop: 8,
-    paddingHorizontal: 2,
-  },
-  albumDesc: {
-    fontSize: 12,
-    marginTop: 2,
-    paddingHorizontal: 2,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
   },
   emptyText: {
     fontSize: 16,

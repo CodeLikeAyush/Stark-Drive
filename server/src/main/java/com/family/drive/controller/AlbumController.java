@@ -47,6 +47,11 @@ public class AlbumController {
         return ResponseEntity.ok(service.removePhotos(id, request, user));
     }
 
+    @PutMapping("/{id}")
+    public ResponseEntity<AlbumDetailsResponse> updateAlbum(@PathVariable Long id, @RequestBody AlbumRequest request, @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(service.updateAlbum(id, request, user));
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteAlbum(@PathVariable Long id, @AuthenticationPrincipal User user) {
         service.deleteAlbum(id, user);

@@ -228,6 +228,12 @@ export const getCachedAlbums = async () => {
   return await database.getAllAsync(`SELECT * FROM albums ORDER BY creation_time DESC`);
 };
 
+export const getCachedAlbum = async (albumId) => {
+  const database = getDB();
+  return await database.getFirstAsync(`SELECT * FROM albums WHERE id = ?`, [albumId.toString()]);
+};
+
+
 export const getCachedAlbumPhotos = async (albumId) => {
   const database = getDB();
   return await database.getAllAsync(
