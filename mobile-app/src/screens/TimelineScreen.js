@@ -427,8 +427,9 @@ export default function TimelineScreen({ navigation, route }) {
                 </TouchableOpacity>
               );
             }
-            const coverUri = item.coverPhotoId
-              ? `${client.defaults.baseURL}/drive/thumbnail/${item.coverPhotoId}`
+            const coverPhotoId = item.coverPhotoId || item.cover_photo_id;
+            const coverUri = coverPhotoId
+              ? `${client.defaults.baseURL}/drive/thumbnail/${coverPhotoId}`
               : null;
             return (
               <TouchableOpacity
@@ -1605,9 +1606,11 @@ export default function TimelineScreen({ navigation, route }) {
                 keyExtractor={(item) => item.id.toString()}
                 contentContainerStyle={{ padding: 16 }}
                 renderItem={({ item }) => {
-                  const coverUri = item.coverPhotoId
-                    ? `${client.defaults.baseURL}/drive/thumbnail/${item.coverPhotoId}`
+                  const coverPhotoId = item.coverPhotoId || item.cover_photo_id;
+                  const coverUri = coverPhotoId
+                    ? `${client.defaults.baseURL}/drive/thumbnail/${coverPhotoId}`
                     : null;
+                  const photoCount = item.photoCount !== undefined ? item.photoCount : item.photo_count;
                   return (
                     <TouchableOpacity
                       style={[styles.albumSelectRow, { borderBottomColor: theme.border }]}
@@ -1626,7 +1629,7 @@ export default function TimelineScreen({ navigation, route }) {
                         )}
                         <View style={{ marginLeft: 12 }}>
                           <Text style={[styles.albumSelectTitle, { color: theme.text }]}>{item.name}</Text>
-                          <Text style={[styles.albumSelectCount, { color: theme.textSecondary }]}>{item.photoCount || 0} photos</Text>
+                          <Text style={[styles.albumSelectCount, { color: theme.textSecondary }]}>{(photoCount !== undefined ? photoCount : 0)} photos</Text>
                         </View>
                       </View>
                       <Ionicons name="chevron-forward" size={20} color={theme.textSecondary} />

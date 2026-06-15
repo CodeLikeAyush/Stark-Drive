@@ -233,7 +233,31 @@ public class DriveService {
         }
 
         if (!driveFile.isHasThumbnail()) {
-            throw new RuntimeException("Thumbnail not found or not yet generated");
+            // Asynchronously generate thumbnail for future requests if it is an image or PDF
+            String contentType = driveFile.getContentType();
+            String nameLower = driveFile.getOriginalFilename().toLowerCase();
+            boolean isImage = (contentType != null && contentType.startsWith("image/"))
+                    || nameLower.endsWith(".jpg") || nameLower.endsWith(".jpeg")
+                    || nameLower.endsWith(".png") || nameLower.endsWith(".gif")
+                    || nameLower.endsWith(".webp") || nameLower.endsWith(".bmp");
+            boolean isPdf = (contentType != null && contentType.equals("application/pdf"))
+                    || nameLower.endsWith(".pdf");
+
+            if (isImage || isPdf) {
+                try {
+                    rabbitTemplate.convertAndSend(RabbitMQConfig.MEDIA_PROCESSING_QUEUE, driveFile.getId().toString());
+                } catch (Exception e) {
+                    System.err.println("Failed to publish thumbnail message to RabbitMQ on fallback: " + e.getMessage());
+                }
+            }
+
+            // Fallback: return the original file stream
+            return minioClient.getObject(
+                    io.minio.GetObjectArgs.builder()
+                            .bucket(BUCKET_NAME)
+                            .object(driveFile.getStoragePath())
+                            .build()
+            );
         }
 
         return minioClient.getObject(

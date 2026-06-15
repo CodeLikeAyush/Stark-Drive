@@ -88,8 +88,9 @@ export default function AllAlbumsScreen({ navigation }) {
     const cardWidth = (width - 32 - (numColumns - 1) * 16) / numColumns;
     const isLandscape = width > height;
     const boxHeight = isLandscape ? Math.min(cardWidth * 1.1, height * 0.4) : cardWidth * 1.3;
-    const coverUri = item.coverPhotoId
-      ? `${client.defaults.baseURL}/drive/thumbnail/${item.coverPhotoId}`
+    const coverPhotoId = item.coverPhotoId || item.cover_photo_id;
+    const coverUri = coverPhotoId
+      ? `${client.defaults.baseURL}/drive/thumbnail/${coverPhotoId}`
       : null;
 
     return (
