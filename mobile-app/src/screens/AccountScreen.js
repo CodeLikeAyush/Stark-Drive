@@ -1,5 +1,5 @@
 import React, { useContext, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, ActivityIndicator, Switch, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, ActivityIndicator, Switch, ScrollView, useWindowDimensions, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
 import { ThemeContext } from '../theme/ThemeContext';
@@ -15,6 +15,28 @@ export default function AccountScreen({ navigation }) {
   const [editNameInput, setEditNameInput] = useState('');
   const [isUpdatingName, setIsUpdatingName] = useState(false);
   const [storageUsed, setStorageUsed] = useState(null);
+  const [autoBackupContacts, setAutoBackupContacts] = useState(false);
+
+  React.useEffect(() => {
+    const loadBackupSettings = async () => {
+      try {
+        const val = await SecureStore.getItemAsync('autoBackupContactsEnabled');
+        setAutoBackupContacts(val === 'true');
+      } catch (e) {
+        console.warn("Failed to load contacts backup setting", e);
+      }
+    };
+    loadBackupSettings();
+  }, []);
+
+  const handleToggleAutoBackupContacts = async (value) => {
+    try {
+      setAutoBackupContacts(value);
+      await SecureStore.setItemAsync('autoBackupContactsEnabled', value ? 'true' : 'false');
+    } catch (e) {
+      console.warn("Failed to save contacts backup setting", e);
+    }
+  };
 
   const displayName = userName || (userEmail ? userEmail.split('@')[0] : 'User');
 
@@ -136,6 +158,22 @@ export default function AccountScreen({ navigation }) {
             <Text style={[styles.rowText, { color: theme.text }]}>Change Vault PIN</Text>
           </View>
         </TouchableOpacity>
+      </View>
+
+      <Text style={sectionTitleStyle}>BACKUP</Text>
+      <View style={sectionStyle}>
+        <View style={[styles.row, { borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Ionicons name="people-outline" size={22} color={theme.primary} style={{ marginRight: 12 }} />
+            <Text style={[styles.rowText, { color: theme.text }]}>Auto-Backup Contacts</Text>
+          </View>
+          <Switch
+            value={autoBackupContacts}
+            onValueChange={handleToggleAutoBackupContacts}
+            trackColor={{ false: theme.border, true: theme.primary }}
+            thumbColor={Platform.OS === 'android' ? '#fff' : undefined}
+          />
+        </View>
       </View>
 
       <Text style={sectionTitleStyle}>ACCOUNT</Text>

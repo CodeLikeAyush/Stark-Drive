@@ -23,6 +23,7 @@ import AllAlbumsScreen from '../screens/AllAlbumsScreen';
 import AlbumDetailsScreen from '../screens/AlbumDetailsScreen';
 import CredentialFormScreen from '../screens/CredentialFormScreen';
 import ChangeVaultPinScreen from '../screens/ChangeVaultPinScreen';
+import ContactsScreen from '../screens/ContactsScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -100,6 +101,7 @@ function DriveStack() {
       }}
     >
       <Stack.Screen name="Drive" component={DriveScreen} options={{ title: 'My Files' }} />
+      <Stack.Screen name="Contacts" component={ContactsScreen} options={{ title: 'Contacts Backup' }} />
     </Stack.Navigator>
   );
 }

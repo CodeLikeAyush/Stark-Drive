@@ -798,6 +798,25 @@ export default function DriveScreen({ navigation, route }) {
         )}
       </View>
 
+      {!folderId && !searchQuery && (
+        <View style={styles.categoriesContainer}>
+          <TouchableOpacity
+            style={[styles.categoryCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('Contacts')}
+          >
+            <View style={[styles.categoryIconContainer, { backgroundColor: theme.primary + '15' }]}>
+              <MaterialCommunityIcons name="account-box-multiple" size={28} color={theme.primary} />
+            </View>
+            <View style={styles.categoryInfo}>
+              <Text style={[styles.categoryTitle, { color: theme.text }]}>Contacts Sync</Text>
+              <Text style={[styles.categorySubtitle, { color: theme.textSecondary }]}>Standard Cloud Backup</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={24} color={theme.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       {loading && items.length === 0 ? (
         <View style={styles.centered}><ActivityIndicator size="large" color={theme.primary} /></View>
       ) : (
@@ -1061,6 +1080,41 @@ export default function DriveScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  categoriesContainer: {
+    paddingHorizontal: 16,
+    marginBottom: 8,
+  },
+  categoryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+  },
+  categoryIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  categoryInfo: {
+    flex: 1,
+  },
+  categoryTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  categorySubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+  },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',

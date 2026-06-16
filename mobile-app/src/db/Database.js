@@ -68,6 +68,15 @@ export const initDB = async () => {
         encrypted_data TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS cached_contacts (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        phone_numbers TEXT,
+        emails TEXT,
+        status TEXT NOT NULL,
+        last_updated INTEGER NOT NULL
+      );
     `);
 
 
@@ -285,4 +294,44 @@ export const deleteCredential = async (id) => {
   const database = getDB();
   await database.runAsync(`DELETE FROM credentials WHERE id = ?`, [id.toString()]);
 };
+
+// --- Contacts ---
+
+export const upsertContactCache = async (contact) => {
+  const database = getDB();
+  await database.runAsync(
+    `INSERT INTO cached_contacts (id, name, phone_numbers, emails, status, last_updated)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name=excluded.name,
+       phone_numbers=excluded.phone_numbers,
+       emails=excluded.emails,
+       status=excluded.status,
+       last_updated=excluded.last_updated`,
+    [
+      contact.id.toString(),
+      contact.name || 'Unknown',
+      contact.phoneNumbers ? JSON.stringify(contact.phoneNumbers) : '[]',
+      contact.emails ? JSON.stringify(contact.emails) : '[]',
+      contact.status || 'local',
+      contact.lastUpdated || Date.now()
+    ]
+  );
+};
+
+export const getCachedContacts = async () => {
+  const database = getDB();
+  return await database.getAllAsync(`SELECT * FROM cached_contacts ORDER BY name ASC`);
+};
+
+export const deleteContactCache = async (id) => {
+  const database = getDB();
+  await database.runAsync(`DELETE FROM cached_contacts WHERE id = ?`, [id.toString()]);
+};
+
+export const clearContactCache = async () => {
+  const database = getDB();
+  await database.runAsync(`DELETE FROM cached_contacts`);
+};
+
 
