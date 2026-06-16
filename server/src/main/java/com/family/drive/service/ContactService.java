@@ -19,9 +19,9 @@ public class ContactService {
     private final ContactRepository contactRepository;
     private final ObjectMapper objectMapper;
 
-    public ContactService(ContactRepository contactRepository, ObjectMapper objectMapper) {
+    public ContactService(ContactRepository contactRepository) {
         this.contactRepository = contactRepository;
-        this.objectMapper = objectMapper;
+        this.objectMapper = new ObjectMapper();
     }
 
     public List<Contact> listContacts(User user) {
