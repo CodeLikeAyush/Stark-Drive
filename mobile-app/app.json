@@ -29,7 +29,13 @@
     "android": {
       "permissions": [
         "ACCESS_NETWORK_STATE",
-        "ACCESS_WIFI_STATE"
+        "ACCESS_WIFI_STATE",
+        "READ_CONTACTS",
+        "WRITE_CONTACTS",
+        "INTERNET",
+        "VIBRATE",
+        "SYSTEM_ALERT_WINDOW",
+        "DOWNLOAD_WITHOUT_NOTIFICATION"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -89,8 +95,13 @@
           "isAccessMediaLocationEnabled": true
         }
       ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow Stark Drive to backup your contacts."
+        }
+      ],
       "expo-font",
-      "expo-build-properties",
       "expo-sqlite",
       "@config-plugins/react-native-pdf",
       "@config-plugins/react-native-blob-util"

@@ -781,7 +781,23 @@ export default function DriveScreen({ navigation, route }) {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      {!folderId && !searchQuery && (
+        <View style={styles.categoriesContainer}>
+          <TouchableOpacity
+            style={[styles.categoryCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('Contacts')}
+          >
+            <MaterialCommunityIcons name="account-box-multiple" size={18} color={theme.primary} style={{ marginRight: 8 }} />
+            <Text style={[styles.categoryTitle, { color: theme.text, flex: 1, fontSize: 13, fontWeight: '600' }]} numberOfLines={1}>
+              Contacts Backup
+            </Text>
+            <MaterialCommunityIcons name="chevron-right" size={16} color={theme.textSecondary} />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: theme.border, marginTop: (!folderId && !searchQuery) ? 8 : 16 }]}>
         <MaterialCommunityIcons name="magnify" size={24} color={theme.textSecondary} style={styles.searchIcon} />
         <TextInput
           style={[styles.searchInput, { color: theme.text }]}
@@ -797,25 +813,6 @@ export default function DriveScreen({ navigation, route }) {
           </TouchableOpacity>
         )}
       </View>
-
-      {!folderId && !searchQuery && (
-        <View style={styles.categoriesContainer}>
-          <TouchableOpacity
-            style={[styles.categoryCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Contacts')}
-          >
-            <View style={[styles.categoryIconContainer, { backgroundColor: theme.primary + '15' }]}>
-              <MaterialCommunityIcons name="account-box-multiple" size={28} color={theme.primary} />
-            </View>
-            <View style={styles.categoryInfo}>
-              <Text style={[styles.categoryTitle, { color: theme.text }]}>Contacts Sync</Text>
-              <Text style={[styles.categorySubtitle, { color: theme.textSecondary }]}>Standard Cloud Backup</Text>
-            </View>
-            <MaterialCommunityIcons name="chevron-right" size={24} color={theme.textSecondary} />
-          </TouchableOpacity>
-        </View>
-      )}
 
       {loading && items.length === 0 ? (
         <View style={styles.centered}><ActivityIndicator size="large" color={theme.primary} /></View>
@@ -1082,38 +1079,19 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   categoriesContainer: {
     paddingHorizontal: 16,
-    marginBottom: 8,
+    marginTop: 16,
+    marginBottom: 0,
   },
   categoryCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
     borderWidth: 1,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  categoryIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  categoryInfo: {
-    flex: 1,
   },
   categoryTitle: {
-    fontSize: 16,
     fontWeight: 'bold',
-  },
-  categorySubtitle: {
-    fontSize: 12,
-    marginTop: 2,
   },
   searchContainer: {
     flexDirection: 'row',

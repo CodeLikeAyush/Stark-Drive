@@ -18,10 +18,10 @@ export default function ContactsScreen({ navigation }) {
   
   const [contacts, setContacts] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState('All'); // 'All' | 'Synced' | 'Cloud' | 'Local'
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [focusedContactId, setFocusedContactId] = useState(null);
   
   // Custom Modal States
   const [alertData, setAlertData] = useState({ visible: false, title: '', message: '', icon: 'information-circle' });
@@ -30,15 +30,90 @@ export default function ContactsScreen({ navigation }) {
   
   // Contact Details Sheet
   const [selectedContact, setSelectedContact] = useState(null);
-  const sheetTranslateY = useRef(new Animated.Value(400)).current;
+  const sheetTranslateY = useRef(new Animated.Value(600)).current;
   const toastOpacity = useRef(new Animated.Value(0)).current;
   
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
+  const isLargeScreen = width >= 768;
+  const useSplitPane = isLargeScreen || (isLandscape && width >= 600);
+
+  const getAvatarColor = (name) => {
+    const colors = [
+      '#007AFF', '#FF9500', '#4CAF50', '#AF52DE', 
+      '#FF3B30', '#5AC8FA', '#34C759', '#FF2D55', 
+      '#5856D6', '#E91E63', '#9C27B0', '#673AB7'
+    ];
+    if (!name) return colors[0];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  const checkAndRequestPermissions = async () => {
+    try {
+      const { status: existingStatus } = await Contacts.getPermissionsAsync();
+      if (existingStatus !== 'granted') {
+        const { status: newStatus } = await Contacts.requestPermissionsAsync();
+        if (newStatus !== 'granted') {
+          setAlertData({
+            visible: true,
+            title: "Permission Required",
+            message: "Please grant contacts permission in your device settings to enable backups.",
+            icon: "people-outline"
+          });
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      console.warn("Failed to check/request contacts permissions", e);
+      return false;
+    }
+  };
 
   useEffect(() => {
-    loadContacts();
+    const init = async () => {
+      await loadContacts();
+      if (!isOfflineMode && userToken) {
+        const hasPermission = await checkAndRequestPermissions();
+        if (hasPermission) {
+          performSync(true);
+        } else {
+          fetchServerContactsQuietly();
+        }
+      }
+    };
+    init();
   }, []);
+
+  // Split-Pane Auto-Selection Hook
+  useEffect(() => {
+    if (useSplitPane && contacts.length > 0) {
+      if (selectedContact === null) {
+        setSelectedContact(contacts[0]);
+      } else {
+        const isStillValid = contacts.some(c => c.id === selectedContact.id);
+        if (!isStillValid) {
+          setSelectedContact(contacts[0]);
+        }
+      }
+    }
+  }, [useSplitPane, contacts]);
+
+  // Search Auto-Selection Hook
+  useEffect(() => {
+    if (useSplitPane && filteredContacts.length > 0) {
+      const selectedIsStillPresent = filteredContacts.some(c => c.id === selectedContact?.id);
+      if (!selectedIsStillPresent) {
+        setSelectedContact(filteredContacts[0]);
+      }
+    } else if (useSplitPane && filteredContacts.length === 0) {
+      setSelectedContact(null);
+    }
+  }, [useSplitPane, searchQuery, filteredContacts]);
 
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -77,17 +152,6 @@ export default function ContactsScreen({ navigation }) {
       console.warn("Failed to load cached contacts", e);
     } finally {
       if (!quiet) setLoading(false);
-    }
-
-    // 2. Trigger auto sync in background if online and auto-backup is active
-    if (!isOfflineMode && userToken) {
-      const isAutoBackup = await SecureStore.getItemAsync('autoBackupContactsEnabled');
-      if (isAutoBackup === 'true') {
-        performSync(true);
-      } else {
-        // Just fetch server contacts to refresh status
-        fetchServerContactsQuietly();
-      }
     }
   };
 
@@ -286,39 +350,36 @@ export default function ContactsScreen({ navigation }) {
   // Contacts Filtering and Searching
   const filteredContacts = useMemo(() => {
     return contacts.filter(contact => {
-      // 1. Filter by Search Query
       const query = searchQuery.toLowerCase().trim();
-      const matchesSearch = contact.name.toLowerCase().includes(query) ||
+      return contact.name.toLowerCase().includes(query) ||
         contact.phoneNumbers.some(p => p.includes(query)) ||
         contact.emails.some(e => e.toLowerCase().includes(query));
-
-      if (!matchesSearch) return false;
-
-      // 2. Filter by tab status
-      if (activeFilter === 'Synced') return contact.status === 'synced';
-      if (activeFilter === 'Cloud') return contact.status === 'cloud';
-      if (activeFilter === 'Local') return contact.status === 'local';
-
-      return true;
     });
-  }, [contacts, searchQuery, activeFilter]);
+  }, [contacts, searchQuery]);
 
   // Bottom Sheet animations
   const openDetails = (contact) => {
     setSelectedContact(contact);
-    Animated.timing(sheetTranslateY, {
-      toValue: 0,
-      duration: 250,
-      useNativeDriver: true
-    }).start();
+    if (!useSplitPane) {
+      sheetTranslateY.setValue(600);
+      Animated.timing(sheetTranslateY, {
+        toValue: 0,
+        duration: 250,
+        useNativeDriver: true
+      }).start();
+    }
   };
 
   const closeDetails = () => {
-    Animated.timing(sheetTranslateY, {
-      toValue: 400,
-      duration: 200,
-      useNativeDriver: true
-    }).start(() => setSelectedContact(null));
+    if (!useSplitPane) {
+      Animated.timing(sheetTranslateY, {
+        toValue: 600,
+        duration: 200,
+        useNativeDriver: true
+      }).start(() => setSelectedContact(null));
+    } else {
+      setSelectedContact(null);
+    }
   };
 
   const copyToClipboard = (text, label) => {
@@ -399,14 +460,27 @@ export default function ContactsScreen({ navigation }) {
       statusColor = "#FF9500";
     }
 
+    const isSelected = selectedContact?.id === item.id;
+    const isFocused = focusedContactId === item.id;
+    const avatarBgColor = getAvatarColor(item.name);
+
     return (
       <TouchableOpacity 
-        style={[styles.contactCard, { backgroundColor: theme.surface, borderColor: theme.border }]} 
-        activeOpacity={0.8}
+        style={[
+          styles.contactCard, 
+          { 
+            backgroundColor: isFocused ? theme.primary + '1C' : (isSelected && useSplitPane ? theme.primary + '0D' : theme.surface), 
+            borderColor: isFocused ? theme.primary : (isSelected && useSplitPane ? theme.primary : theme.border),
+            borderWidth: (isSelected && useSplitPane) || isFocused ? 2 : 1
+          }
+        ]} 
+        activeOpacity={0.7}
         onPress={() => openDetails(item)}
+        onFocus={() => setFocusedContactId(item.id)}
+        onBlur={() => setFocusedContactId(null)}
       >
-        <View style={[styles.avatar, { backgroundColor: theme.primary + '15' }]}>
-          <Text style={[styles.avatarText, { color: theme.primary }]}>{initials || '?'}</Text>
+        <View style={[styles.avatar, { backgroundColor: avatarBgColor }]}>
+          <Text style={[styles.avatarText, { color: '#fff' }]}>{initials || '?'}</Text>
         </View>
         <View style={styles.contactDetails}>
           <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>{item.name}</Text>
@@ -421,97 +495,282 @@ export default function ContactsScreen({ navigation }) {
     );
   };
 
-  const FilterPill = ({ title }) => {
-    const isActive = activeFilter === title;
+  const renderLeftColumnContent = () => (
+    <View style={{ flex: 1 }}>
+      {/* Search & Actions Bar */}
+      <View style={styles.headerRow}>
+        <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Ionicons name="search" size={20} color={theme.textSecondary} style={{ marginRight: 8 }} />
+          <TextInput
+            style={[styles.searchInput, { color: theme.text }]}
+            placeholder="Search name, phone, email..."
+            placeholderTextColor={theme.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
+        
+        <TouchableOpacity 
+          style={[styles.syncBtn, { backgroundColor: theme.primary }]}
+          activeOpacity={0.8}
+          onPress={() => performSync(false)}
+          disabled={syncing}
+        >
+          {syncing ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="sync" size={20} color="#fff" />
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {/* Sync Status Banner */}
+      <View style={[styles.syncStatusContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Ionicons name="checkmark-circle" size={18} color="#4CAF50" style={{ marginRight: 8 }} />
+        <Text style={[styles.syncStatusText, { color: theme.textSecondary }]}>
+          <Text style={{ color: theme.text, fontWeight: 'bold' }}>{contacts.filter(c => c.status === 'synced').length}</Text> out of <Text style={{ color: theme.text, fontWeight: 'bold' }}>{contacts.length}</Text> contacts synced
+        </Text>
+      </View>
+
+      {/* Sync Offline Status banner */}
+      {isOfflineMode && (
+        <View style={[styles.offlineBanner, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Ionicons name="cloud-offline" size={16} color={theme.textSecondary} style={{ marginRight: 6 }} />
+          <Text style={{ color: theme.textSecondary, fontSize: 13 }}>Viewing cached offline contacts</Text>
+        </View>
+      )}
+
+      {/* Contacts Directory List */}
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={theme.primary} />
+        </View>
+      ) : filteredContacts.length === 0 ? (
+        <View style={styles.centered}>
+          <MaterialCommunityIcons name="account-search-outline" size={64} color={theme.textSecondary} style={{ marginBottom: 12 }} />
+          <Text style={{ color: theme.textSecondary, fontSize: 16 }}>No contacts found</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filteredContacts}
+          renderItem={renderContactItem}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.listContainer}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.primary} />
+          }
+        />
+      )}
+    </View>
+  );
+
+  const renderContactDetailsContent = (contact, isSplitView = false) => {
+    const avatarColor = getAvatarColor(contact.name);
     return (
-      <TouchableOpacity
-        style={[
-          styles.pill,
-          isActive ? { backgroundColor: theme.primary } : { backgroundColor: theme.surface, borderColor: theme.border }
-        ]}
-        onPress={() => setActiveFilter(title)}
-      >
-        <Text style={[styles.pillText, { color: isActive ? '#fff' : theme.textSecondary }]}>{title}</Text>
-      </TouchableOpacity>
+      <View style={[{ width: '100%' }, isSplitView ? { flex: 1 } : null]}>
+        {/* Drag handle */}
+        {!isSplitView && <View style={[styles.dragHandle, { backgroundColor: theme.border }]} />}
+
+        <ScrollView 
+          style={[styles.detailsScroll, isSplitView ? { flex: 1 } : { maxHeight: 380 }]} 
+          contentContainerStyle={{ paddingBottom: 40 }} 
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Profile Card */}
+          <View style={styles.profileCard}>
+            <View style={[styles.profileAvatar, { backgroundColor: avatarColor, elevation: 6, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 4 }]}>
+              <Text style={styles.profileAvatarText}>
+                {contact.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+              </Text>
+            </View>
+            <Text style={[styles.profileName, { color: theme.text }]} numberOfLines={1}>{contact.name}</Text>
+            
+            {/* Status Badge */}
+            <View style={[
+              styles.statusBadge, 
+              { 
+                backgroundColor: contact.status === 'synced' ? '#4CAF5015' : 
+                                 contact.status === 'cloud' ? theme.primary + '15' : '#FF950015',
+                borderColor: contact.status === 'synced' ? '#4CAF5030' : 
+                             contact.status === 'cloud' ? theme.primary + '30' : '#FF950030'
+              }
+            ]}>
+              <View style={[
+                styles.statusDot, 
+                { 
+                  backgroundColor: contact.status === 'synced' ? '#4CAF50' : 
+                                   contact.status === 'cloud' ? theme.primary : '#FF9500' 
+                }
+              ]} />
+              <Text style={[
+                styles.statusBadgeText, 
+                { 
+                  color: contact.status === 'synced' ? '#4CAF50' : 
+                         contact.status === 'cloud' ? theme.primary : '#FF9500'
+                }
+              ]}>
+                {contact.status === 'synced' ? 'Synced with Cloud' : 
+                 contact.status === 'cloud' ? 'Cloud Only' : 'Pending Backup'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Quick Action Dialers */}
+          {contact.phoneNumbers.length > 0 && (
+            <View style={styles.actionGrid}>
+              <TouchableOpacity 
+                style={[styles.actionGridItem, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                onPress={() => triggerCall(contact.phoneNumbers[0])}
+              >
+                <View style={[styles.actionIconWrapper, { backgroundColor: theme.primary + '10' }]}>
+                  <Ionicons name="call" size={20} color={theme.primary} />
+                </View>
+                <Text style={[styles.actionGridLabel, { color: theme.text }]}>Call</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.actionGridItem, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                onPress={() => triggerSMS(contact.phoneNumbers[0])}
+              >
+                <View style={[styles.actionIconWrapper, { backgroundColor: theme.primary + '10' }]}>
+                  <Ionicons name="chatbubble-ellipses" size={20} color={theme.primary} />
+                </View>
+                <Text style={[styles.actionGridLabel, { color: theme.text }]}>SMS</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.actionGridItem, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                onPress={() => triggerWhatsApp(contact.phoneNumbers[0])}
+              >
+                <View style={[styles.actionIconWrapper, { backgroundColor: '#25D36615' }]}>
+                  <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
+                </View>
+                <Text style={[styles.actionGridLabel, { color: theme.text }]}>WhatsApp</Text>
+              </TouchableOpacity>
+
+              {contact.emails.length > 0 && (
+                <TouchableOpacity 
+                  style={[styles.actionGridItem, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  onPress={() => triggerEmail(contact.emails[0])}
+                >
+                  <View style={[styles.actionIconWrapper, { backgroundColor: theme.primary + '10' }]}>
+                    <Ionicons name="mail" size={20} color={theme.primary} />
+                  </View>
+                  <Text style={[styles.actionGridLabel, { color: theme.text }]}>Email</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* Scrollable details list items */}
+          <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Phone Numbers</Text>
+          {contact.phoneNumbers.length === 0 ? (
+            <Text style={[styles.emptyLabel, { color: theme.textSecondary }]}>No phone numbers saved</Text>
+          ) : (
+            contact.phoneNumbers.map((phone, idx) => (
+              <View key={`phone-${idx}`} style={[styles.detailsRow, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.detailsVal, { color: theme.text }]}>{phone}</Text>
+                </View>
+                <View style={styles.rowActions}>
+                  <TouchableOpacity 
+                    style={[styles.rowActionBtn, { backgroundColor: theme.background }]} 
+                    onPress={() => copyToClipboard(phone, "phone number")}
+                  >
+                    <Ionicons name="copy-outline" size={16} color={theme.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.rowActionBtn, { backgroundColor: theme.primary + '15' }]} 
+                    onPress={() => triggerCall(phone)}
+                  >
+                    <Ionicons name="call-outline" size={16} color={theme.primary} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )}
+
+          <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Email Addresses</Text>
+          {contact.emails.length === 0 ? (
+            <Text style={[styles.emptyLabel, { color: theme.textSecondary }]}>No email addresses saved</Text>
+          ) : (
+            contact.emails.map((email, idx) => (
+              <View key={`email-${idx}`} style={[styles.detailsRow, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.detailsVal, { color: theme.text }]}>{email}</Text>
+                </View>
+                <View style={styles.rowActions}>
+                  <TouchableOpacity 
+                    style={[styles.rowActionBtn, { backgroundColor: theme.background }]} 
+                    onPress={() => copyToClipboard(email, "email address")}
+                  >
+                    <Ionicons name="copy-outline" size={16} color={theme.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.rowActionBtn, { backgroundColor: theme.primary + '15' }]} 
+                    onPress={() => triggerEmail(email)}
+                  >
+                    <Ionicons name="mail-outline" size={16} color={theme.primary} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )}
+
+          {/* Backup management */}
+          {contact.status !== 'local' && (
+            <TouchableOpacity 
+              style={[styles.deleteBackupBtn, { borderColor: theme.destructive, backgroundColor: theme.destructive + '10' }]}
+              onPress={() => handleDeleteBackup(contact.id, contact.name)}
+            >
+              <Ionicons name="trash-outline" size={18} color={theme.destructive} style={{ marginRight: 6 }} />
+              <Text style={{ color: theme.destructive, fontWeight: 'bold' }}>Delete Cloud Backup</Text>
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      </View>
     );
   };
 
+  const renderRightPanePlaceholder = () => (
+    <View style={styles.emptyStateContainer}>
+      <View style={[styles.emptyStateIconCircle, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Ionicons name="person-outline" size={48} color={theme.textSecondary} />
+      </View>
+      <Text style={[styles.emptyStateTitle, { color: theme.text }]}>No Contact Selected</Text>
+      <Text style={[styles.emptyStateSubtitle, { color: theme.textSecondary }]}>
+        Select a contact from the list on the left to view their detailed profile, quick actions, and backup status.
+      </Text>
+    </View>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      {/* Capped center content wrapper for tablets, landscape, and TV devices */}
-      <View style={styles.tabletWrapper}>
-        
-        {/* Search & Actions Bar */}
-        <View style={styles.headerRow}>
-          <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Ionicons name="search" size={20} color={theme.textSecondary} style={{ marginRight: 8 }} />
-            <TextInput
-              style={[styles.searchInput, { color: theme.text }]}
-              placeholder="Search name, phone, email..."
-              placeholderTextColor={theme.textSecondary}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCorrect={false}
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Ionicons name="close-circle" size={18} color={theme.textSecondary} />
-              </TouchableOpacity>
-            )}
+      {useSplitPane ? (
+        <View style={styles.splitPaneContainer}>
+          <View style={[styles.leftPane, { borderRightColor: theme.border }]}>
+            {renderLeftColumnContent()}
           </View>
-          
-          <TouchableOpacity 
-            style={[styles.syncBtn, { backgroundColor: theme.primary }]}
-            activeOpacity={0.8}
-            onPress={() => performSync(false)}
-            disabled={syncing}
-          >
-            {syncing ? (
-              <ActivityIndicator size="small" color="#fff" />
+          <View style={styles.rightPane}>
+            {selectedContact ? (
+              renderContactDetailsContent(selectedContact, true)
             ) : (
-              <Ionicons name="sync" size={20} color="#fff" />
+              renderRightPanePlaceholder()
             )}
-          </TouchableOpacity>
+          </View>
         </View>
-
-        {/* Filter Pills row */}
-        <View style={styles.pillsRow}>
-          <FilterPill title="All" />
-          <FilterPill title="Synced" />
-          <FilterPill title="Local" />
-          <FilterPill title="Cloud" />
+      ) : (
+        <View style={styles.tabletWrapper}>
+          {renderLeftColumnContent()}
         </View>
-
-        {/* Sync Offline Status banner */}
-        {isOfflineMode && (
-          <View style={[styles.offlineBanner, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Ionicons name="cloud-offline" size={16} color={theme.textSecondary} style={{ marginRight: 6 }} />
-            <Text style={{ color: theme.textSecondary, fontSize: 13 }}>Viewing cached offline contacts</Text>
-          </View>
-        )}
-
-        {/* Contacts Directory List */}
-        {loading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" color={theme.primary} />
-          </View>
-        ) : filteredContacts.length === 0 ? (
-          <View style={styles.centered}>
-            <MaterialCommunityIcons name="account-search-outline" size={64} color={theme.textSecondary} style={{ marginBottom: 12 }} />
-            <Text style={{ color: theme.textSecondary, fontSize: 16 }}>No contacts found</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={filteredContacts}
-            renderItem={renderContactItem}
-            keyExtractor={item => item.id}
-            contentContainerStyle={styles.listContainer}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.primary} />
-            }
-          />
-        )}
-      </View>
+      )}
 
       {/* Floating Toast Notification */}
       {toastMessage && (
@@ -521,139 +780,27 @@ export default function ContactsScreen({ navigation }) {
       )}
 
       {/* Contact Details Bottom Sheet Drawer */}
-      <Modal visible={selectedContact !== null} transparent animationType="fade" onRequestClose={closeDetails}>
-        <View style={styles.sheetOverlay}>
-          <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={closeDetails} />
-          
-          <Animated.View 
-            style={[
-              styles.sheetContent, 
-              { 
-                backgroundColor: theme.surface, 
-                borderColor: theme.border,
-                transform: [{ translateY: sheetTranslateY }],
-                maxWidth: isLandscape ? 600 : '100%'
-              }
-            ]}
-          >
-            {selectedContact && (
-              <View style={{ width: '100%' }}>
-                {/* Drag handle */}
-                <View style={[styles.dragHandle, { backgroundColor: theme.border }]} />
-
-                {/* Profile Card */}
-                <View style={styles.profileCard}>
-                  <View style={[styles.profileAvatar, { backgroundColor: theme.primary }]}>
-                    <Text style={styles.profileAvatarText}>
-                      {selectedContact.name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
-                    </Text>
-                  </View>
-                  <Text style={[styles.profileName, { color: theme.text }]}>{selectedContact.name}</Text>
-                  <Text style={[styles.profileStatus, { color: theme.textSecondary }]}>
-                    {selectedContact.status === 'synced' ? 'Backed up to Stark Cloud' : 
-                     selectedContact.status === 'cloud' ? 'Archived Cloud-Only Contact' : 'Pending Cloud Backup'}
-                  </Text>
-                </View>
-
-                {/* Quick Action Dialers */}
-                {selectedContact.phoneNumbers.length > 0 && (
-                  <View style={styles.actionGrid}>
-                    <TouchableOpacity 
-                      style={[styles.actionGridItem, { backgroundColor: theme.background }]}
-                      onPress={() => triggerCall(selectedContact.phoneNumbers[0])}
-                    >
-                      <Ionicons name="call" size={20} color={theme.primary} />
-                      <Text style={[styles.actionGridLabel, { color: theme.text }]}>Call</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                      style={[styles.actionGridItem, { backgroundColor: theme.background }]}
-                      onPress={() => triggerSMS(selectedContact.phoneNumbers[0])}
-                    >
-                      <Ionicons name="chatbubble-ellipses" size={20} color={theme.primary} />
-                      <Text style={[styles.actionGridLabel, { color: theme.text }]}>SMS</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity 
-                      style={[styles.actionGridItem, { backgroundColor: theme.background }]}
-                      onPress={() => triggerWhatsApp(selectedContact.phoneNumbers[0])}
-                    >
-                      <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
-                      <Text style={[styles.actionGridLabel, { color: theme.text }]}>WhatsApp</Text>
-                    </TouchableOpacity>
-
-                    {selectedContact.emails.length > 0 && (
-                      <TouchableOpacity 
-                        style={[styles.actionGridItem, { backgroundColor: theme.background }]}
-                        onPress={() => triggerEmail(selectedContact.emails[0])}
-                      >
-                        <Ionicons name="mail" size={20} color={theme.primary} />
-                        <Text style={[styles.actionGridLabel, { color: theme.text }]}>Email</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-
-                {/* Scrollable details information */}
-                <ScrollView style={styles.detailsScroll} contentContainerStyle={{ paddingBottom: 20 }}>
-                  <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Phone Numbers</Text>
-                  {selectedContact.phoneNumbers.length === 0 ? (
-                    <Text style={[styles.emptyLabel, { color: theme.textSecondary }]}>No phone numbers saved</Text>
-                  ) : (
-                    selectedContact.phoneNumbers.map((phone, idx) => (
-                      <View key={`phone-${idx}`} style={[styles.detailsRow, { borderBottomColor: theme.border }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.detailsVal, { color: theme.text }]}>{phone}</Text>
-                        </View>
-                        <View style={styles.rowActions}>
-                          <TouchableOpacity style={styles.rowActionBtn} onPress={() => copyToClipboard(phone, "phone number")}>
-                            <Ionicons name="copy-outline" size={18} color={theme.textSecondary} />
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.rowActionBtn} onPress={() => triggerCall(phone)}>
-                            <Ionicons name="call-outline" size={18} color={theme.primary} />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))
-                  )}
-
-                  <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>Email Addresses</Text>
-                  {selectedContact.emails.length === 0 ? (
-                    <Text style={[styles.emptyLabel, { color: theme.textSecondary }]}>No email addresses saved</Text>
-                  ) : (
-                    selectedContact.emails.map((email, idx) => (
-                      <View key={`email-${idx}`} style={[styles.detailsRow, { borderBottomColor: theme.border }]}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.detailsVal, { color: theme.text }]}>{email}</Text>
-                        </View>
-                        <View style={styles.rowActions}>
-                          <TouchableOpacity style={styles.rowActionBtn} onPress={() => copyToClipboard(email, "email address")}>
-                            <Ionicons name="copy-outline" size={18} color={theme.textSecondary} />
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.rowActionBtn} onPress={() => triggerEmail(email)}>
-                            <Ionicons name="mail-outline" size={18} color={theme.primary} />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))
-                  )}
-
-                  {/* Backup management */}
-                  {selectedContact.status !== 'local' && (
-                    <TouchableOpacity 
-                      style={[styles.deleteBackupBtn, { borderColor: theme.destructive }]}
-                      onPress={() => handleDeleteBackup(selectedContact.id, selectedContact.name)}
-                    >
-                      <Ionicons name="trash-outline" size={18} color={theme.destructive} style={{ marginRight: 6 }} />
-                      <Text style={{ color: theme.destructive, fontWeight: 'bold' }}>Delete Cloud Backup</Text>
-                    </TouchableOpacity>
-                  )}
-                </ScrollView>
-              </View>
-            )}
-          </Animated.View>
-        </View>
-      </Modal>
+      {!useSplitPane && (
+        <Modal visible={selectedContact !== null} transparent animationType="fade" onRequestClose={closeDetails}>
+          <View style={styles.sheetOverlay}>
+            <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={closeDetails} />
+            
+            <Animated.View 
+              style={[
+                styles.sheetContent, 
+                { 
+                  backgroundColor: theme.surface, 
+                  borderColor: theme.border,
+                  transform: [{ translateY: sheetTranslateY }],
+                  maxWidth: isLandscape ? 600 : '100%'
+                }
+              ]}
+            >
+              {selectedContact && renderContactDetailsContent(selectedContact, false)}
+            </Animated.View>
+          </View>
+        </Modal>
+      )}
 
       {/* Confirm & Alert Custom Modals instead of Native Dialogs */}
       <ConfirmModal
@@ -688,6 +835,22 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: 16,
   },
+  splitPaneContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    width: '100%',
+  },
+  leftPane: {
+    flex: 4,
+    borderRightWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  rightPane: {
+    flex: 6,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -716,21 +879,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     elevation: 2,
   },
-  pillsRow: {
+  syncStatusContainer: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  pill: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'transparent',
+    marginBottom: 16,
+    alignSelf: 'flex-start',
   },
-  pillText: {
-    fontWeight: 'bold',
-    fontSize: 13,
+  syncStatusText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   offlineBanner: {
     flexDirection: 'row',
@@ -846,9 +1007,59 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
-  profileStatus: {
-    fontSize: 13,
-    marginTop: 2,
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 6,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  actionIconWrapper: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  emptyStateContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyStateIconCircle: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  emptyStateTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptyStateSubtitle: {
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   actionGrid: {
     flexDirection: 'row',
@@ -860,9 +1071,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     width: 68,
-    height: 60,
+    height: 70,
     borderRadius: 16,
-    gap: 4,
+    borderWidth: 1,
   },
   actionGridLabel: {
     fontSize: 11,
@@ -870,14 +1081,13 @@ const styles = StyleSheet.create({
   },
   detailsScroll: {
     width: '100%',
-    maxHeight: 250,
   },
   sectionTitle: {
     fontSize: 12,
     fontWeight: 'bold',
     textTransform: 'uppercase',
-    marginTop: 12,
-    marginBottom: 6,
+    marginTop: 16,
+    marginBottom: 8,
   },
   emptyLabel: {
     fontSize: 14,
@@ -887,27 +1097,33 @@ const styles = StyleSheet.create({
   detailsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 8,
   },
   detailsVal: {
     fontSize: 16,
   },
   rowActions: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 8,
   },
   rowActionBtn: {
-    padding: 4,
+    padding: 8,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   deleteBackupBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    height: 44,
-    borderRadius: 22,
+    height: 48,
+    borderRadius: 24,
     borderWidth: 1.5,
-    marginTop: 20,
+    marginTop: 24,
     marginBottom: 10,
   },
 });
