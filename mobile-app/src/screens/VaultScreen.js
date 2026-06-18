@@ -145,15 +145,17 @@ export default function VaultScreen({ route, navigation }) {
     return unsubscribe;
   }, [navigation]);
 
-  // Fetch data when activeTab changes or when screen is first loaded
-  useEffect(() => {
-    setSearchQuery('');
-    if (activeTab === 'FILES') {
-      fetchVaultFiles();
-    } else {
-      fetchVaultCredentials();
-    }
-  }, [activeTab]);
+  // Fetch data when activeTab changes or when screen is focused/returned to
+  useFocusEffect(
+    useCallback(() => {
+      setSearchQuery('');
+      if (activeTab === 'FILES') {
+        fetchVaultFiles();
+      } else {
+        fetchVaultCredentials();
+      }
+    }, [activeTab])
+  );
 
   const refreshOfflineState = async () => {
     try {
@@ -501,6 +503,36 @@ export default function VaultScreen({ route, navigation }) {
 
       // 2. Fetch from Network
       if (!isOfflineMode) {
+        // Sync local-only credentials to server first
+        const localOnly = cached.filter(c => c.id.toString().startsWith('local_'));
+        for (const localCred of localOnly) {
+          try {
+            const reqBody = {
+              id: null, // Force new ID on server
+              title: localCred.title,
+              type: localCred.type,
+              encryptedData: localCred.encrypted_data || localCred.encryptedData,
+              updatedAt: localCred.updated_at || localCred.updatedAt
+            };
+            const res = await client.post('/vault/credentials', reqBody);
+            if (res.data && res.data.id) {
+              // Swap temp local ID with server ID in SQLite
+              await deleteCredential(localCred.id);
+              await upsertCredentialCache({
+                id: res.data.id,
+                title: localCred.title,
+                type: localCred.type,
+                encryptedData: localCred.encrypted_data || localCred.encryptedData,
+                updatedAt: localCred.updated_at || localCred.updatedAt
+              });
+            }
+          } catch (syncError) {
+            console.warn(`Failed to sync local credential ${localCred.id} to cloud`, syncError);
+            // Ignore error for this item and continue
+          }
+        }
+
+        // Fetch unified list from server
         const res = await client.get('/vault/credentials', { timeout: 3000 });
         const serverData = res.data || [];
 
@@ -671,9 +703,21 @@ export default function VaultScreen({ route, navigation }) {
       </View>
       <View style={styles.textContainer}>
         <Text style={[styles.fileName, { color: theme.text }]} numberOfLines={1}>{item.title}</Text>
-        <Text style={[styles.fileSize, { color: theme.textSecondary }]}>
-          {item.type.charAt(0) + item.type.slice(1).toLowerCase().replace('_', ' ')} • Secured
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+          <Text style={[styles.fileSize, { color: theme.textSecondary }]}>
+            {item.type.charAt(0) + item.type.slice(1).toLowerCase().replace('_', ' ')}
+          </Text>
+          <Text style={[styles.fileSize, { color: theme.textSecondary }]}> • </Text>
+          <MaterialCommunityIcons 
+            name={item.id.toString().startsWith('local_') ? "cloud-upload-outline" : "cloud-check"} 
+            size={12} 
+            color={item.id.toString().startsWith('local_') ? "#FF9500" : "#4CAF50"} 
+            style={{ marginRight: 3 }}
+          />
+          <Text style={[styles.fileSize, { color: item.id.toString().startsWith('local_') ? "#FF9500" : "#4CAF50", fontWeight: '600', fontSize: 11 }]}>
+            {item.id.toString().startsWith('local_') ? 'Local Only' : 'Synced'}
+          </Text>
+        </View>
       </View>
       <TouchableOpacity onPress={() => handleCredentialPress(item)} style={{ padding: 4 }}>
         <MaterialCommunityIcons name="chevron-right" size={24} color={theme.textSecondary} />
