@@ -1,5 +1,14 @@
 .env
 data/
+
+# Mobile app
 mobile-app/node_modules/
 mobile-app/.expo/
+
+# Desktop app
+desktop-app/node_modules/
+desktop-app/dist/
+desktop-app/.vite/
+
+# Server
 server/target/
