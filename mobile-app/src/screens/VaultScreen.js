@@ -17,11 +17,13 @@ import client from '../api/client';
 import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNotAvailableOffline, getFile, getOfflineFiles, getCredentials, deleteCredential, upsertCredentialCache } from '../db/Database';
 import ConfirmModal from '../components/ConfirmModal';
 import AlertModal from '../components/AlertModal';
+import { DockContext } from '../context/DockContext';
 
 export default function VaultScreen({ route, navigation }) {
   const { vaultPin, masterKey } = route.params;
   const { theme, isDark } = useContext(ThemeContext);
   const { userToken, isOfflineMode } = useContext(AuthContext);
+  const { sendToDock, connectedDevice } = useContext(DockContext);
 
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
@@ -427,6 +429,77 @@ export default function VaultScreen({ route, navigation }) {
       });
     } finally {
       setOfflineTogglingId(null);
+    }
+  };
+
+  const handleSendToDock = async () => {
+    setIsActionMenuVisible(false);
+    if (!selectedItem) return;
+
+    if (!connectedDevice) {
+      setAlertData({
+        visible: true,
+        title: 'Not Connected',
+        message: 'Please connect to a device in the Dock tab first.',
+        confirmText: 'OK',
+        onConfirm: () => setAlertData({ ...alertData, visible: false })
+      });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      let encryptedUri = null;
+      let usingOffline = false;
+
+      const cached = await getFile(selectedItem.id);
+      if (cached && cached.is_available_offline === 1 && cached.local_path) {
+        const info = await FileSystem.getInfoAsync(cached.local_path);
+        if (info.exists) {
+          encryptedUri = cached.local_path;
+          usingOffline = true;
+        }
+      }
+
+      if (!encryptedUri) {
+        const downloadUrl = `${client.defaults.baseURL}/drive/download/${selectedItem.id}`;
+        const tempLocalEncUri = `${FileSystem.cacheDirectory}temp_enc_${selectedItem.id}`;
+        const { uri, status } = await FileSystem.downloadAsync(downloadUrl, tempLocalEncUri, {
+          headers: { Authorization: `Bearer ${userToken}` }
+        });
+        if (status !== 200) {
+          throw new Error("Failed to download vault file.");
+        }
+        encryptedUri = uri;
+      }
+
+      const extMatch = selectedItem.originalFilename.match(/\.[^.]+$/);
+      const ext = extMatch ? extMatch[0] : '';
+      const decryptedUri = await decryptFileAsync(encryptedUri, masterKey, ext);
+
+      await sendToDock(decryptedUri, selectedItem.originalFilename, 'vault', selectedItem.content_type);
+      
+      try {
+        await FileSystem.deleteAsync(decryptedUri, { idempotent: true });
+      } catch (e) {}
+
+      setLoading(false);
+      setAlertData({
+        visible: true,
+        title: 'Sent to Dock',
+        message: `Successfully shared "${selectedItem.originalFilename}" to the Dock.`,
+        confirmText: 'OK',
+        onConfirm: () => setAlertData({ ...alertData, visible: false })
+      });
+    } catch (err) {
+      setLoading(false);
+      setAlertData({
+        visible: true,
+        title: 'Share Failed',
+        message: err.message || 'Could not send the Vault file to the Dock.',
+        confirmText: 'OK',
+        onConfirm: () => setAlertData({ ...alertData, visible: false })
+      });
     }
   };
 
@@ -862,6 +935,11 @@ export default function VaultScreen({ route, navigation }) {
               <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={openRenameModal}>
                 <MaterialCommunityIcons name="pencil" size={24} color={theme.text} style={styles.sheetIcon} />
                 <Text style={[styles.sheetButtonText, { color: theme.text }]}>Rename</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={handleSendToDock}>
+                <MaterialCommunityIcons name="cellphone-link" size={24} color={theme.text} style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: theme.text }]}>Send to Dock</Text>
               </TouchableOpacity>
 
               <TouchableOpacity style={[styles.sheetButton, { borderBottomWidth: 0 }]} onPress={promptDelete}>

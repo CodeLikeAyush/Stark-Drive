@@ -13,6 +13,7 @@ import { getFilesByParent, upsertFileCache, markFileAvailableOffline, markFileNo
 import ConfirmModal from '../components/ConfirmModal';
 import VaultPinModal from '../components/VaultPinModal';
 import { encryptFileAsync } from '../utils/crypto';
+import { DockContext } from '../context/DockContext';
 
 const gridSpacing = 16;
 
@@ -148,6 +149,7 @@ export default function DriveScreen({ navigation, route }) {
   ).current;
 
   const { theme, isDark } = useContext(ThemeContext);
+  const { sendToDock, connectedDevice } = useContext(DockContext);
   const { userToken, isOfflineMode, hasVaultSetup } = useContext(AuthContext);
 
   const [isVaultPinModalVisible, setIsVaultPinModalVisible] = useState(false);
@@ -458,6 +460,64 @@ export default function DriveScreen({ navigation, route }) {
       fetchDirectory();
     } catch (e) {
       showInfoAlert("Move failed. Cannot move into itself.");
+    }
+  };
+
+  const handleSendToDock = async () => {
+    setIsActionMenuVisible(false);
+    if (!selectedItem) return;
+
+    if (!connectedDevice) {
+      setAlertData({
+        visible: true,
+        title: 'Not Connected',
+        message: 'Please connect to a device in the Dock tab first.',
+        confirmText: 'OK',
+        onConfirm: () => setAlertData({ visible: false })
+      });
+      return;
+    }
+
+    try {
+      let localPath = selectedItem.local_path;
+      if (!localPath || !selectedItem.is_available_offline) {
+        setAlertData({
+          visible: true,
+          title: 'Downloading...',
+          message: 'Downloading file from server to send to Dock...',
+          confirmText: 'Cancel',
+          onConfirm: () => {}
+        });
+
+        const downloadUrl = `${client.defaults.baseURL}/drive/download/${selectedItem.id}`;
+        const tempLocalUri = `${FileSystem.documentDirectory}temp_dock_${selectedItem.originalFilename}`;
+        const { uri, status } = await FileSystem.downloadAsync(downloadUrl, tempLocalUri, {
+          headers: { Authorization: `Bearer ${userToken}` }
+        });
+        setAlertData({ visible: false });
+
+        if (status !== 200) {
+          throw new Error('Failed to download file from server.');
+        }
+        localPath = uri;
+      }
+
+      await sendToDock(localPath, selectedItem.originalFilename, 'file', selectedItem.content_type);
+      setAlertData({
+        visible: true,
+        title: 'Sent to Dock',
+        message: `Successfully shared "${selectedItem.originalFilename}" to the Dock.`,
+        confirmText: 'OK',
+        onConfirm: () => setAlertData({ visible: false })
+      });
+    } catch (err) {
+      setAlertData({
+        visible: true,
+        title: 'Upload Failed',
+        message: err.message || 'Could not send the file to the Dock.',
+        confirmText: 'OK',
+        onConfirm: () => setAlertData({ visible: false })
+      });
     }
   };
 
@@ -910,6 +970,11 @@ export default function DriveScreen({ navigation, route }) {
                   <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={handleMoveToVault}>
                     <MaterialCommunityIcons name="safe" size={24} color={theme.text} style={styles.sheetIcon} />
                     <Text style={[styles.sheetButtonText, { color: theme.text }]}>Move to Vault</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity style={[styles.sheetButton, { borderBottomColor: theme.border }]} onPress={handleSendToDock}>
+                    <MaterialCommunityIcons name="cellphone-link" size={24} color={theme.text} style={styles.sheetIcon} />
+                    <Text style={[styles.sheetButtonText, { color: theme.text }]}>Send to Dock</Text>
                   </TouchableOpacity>
                 </>
               )}

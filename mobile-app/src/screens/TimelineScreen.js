@@ -15,11 +15,13 @@ import ZoomableImage from '../components/ZoomableImage';
 import VaultPinModal from '../components/VaultPinModal';
 import { encryptFileAsync } from '../utils/crypto';
 import client from '../api/client';
+import { DockContext } from '../context/DockContext';
 
 export default function TimelineScreen({ navigation, route }) {
   const { theme } = useContext(ThemeContext);
   const { photos, loading, errorMsg, getSyncedLocalAssets, executeCleanup, refresh, trashPhotos } = useMediaBackup();
   const { autoBackupEnabled, setAutoBackupEnabled, backupAlbums, setBackupAlbums, hasVaultSetup, userToken, isOfflineMode } = useContext(AuthContext);
+  const { sendToDock, connectedDevice } = useContext(DockContext);
 
   const { width, height } = useWindowDimensions();
   const columnCount = width > 1200 ? 8 : width > 768 ? 5 : 3;
@@ -498,6 +500,88 @@ export default function TimelineScreen({ navigation, route }) {
   const showMoreActionsBatch = () => {
     setMoreActionsTargetPhoto(null);
     setShowMoreActionsModal(true);
+  };
+
+  const handleSendSinglePhotoToDock = async (photo) => {
+    if (!connectedDevice) {
+      Alert.alert('Not Connected', 'Please connect to a device in the Dock tab first.');
+      return;
+    }
+
+    try {
+      let localPath = photo.local_path;
+      if (!localPath || !photo.is_available_offline) {
+        if (photo.isLocal) {
+          let assetUri = photo.uri;
+          try {
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo.id);
+            assetUri = assetInfo.localUri || assetInfo.uri;
+          } catch (infoErr) {
+            console.log("Failed to get asset info:", infoErr);
+          }
+          localPath = assetUri;
+        } else {
+          const tempLocalUri = `${FileSystem.documentDirectory}temp_dock_${Date.now()}_${photo.filename}`;
+          const { uri, status } = await FileSystem.downloadAsync(photo.uri, tempLocalUri, {
+            headers: photo.headers
+          });
+          if (status !== 200) {
+            throw new Error("Failed to download photo from server.");
+          }
+          localPath = uri;
+        }
+      }
+
+      await sendToDock(localPath, photo.filename, 'photo', 'image/jpeg');
+      Alert.alert('Success', `Shared "${photo.filename}" to the Dock.`);
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Could not send photo to the Dock.');
+    }
+  };
+
+  const handleSendSelectedPhotosToDock = async () => {
+    if (!connectedDevice) {
+      Alert.alert('Not Connected', 'Please connect to a device in the Dock tab first.');
+      return;
+    }
+
+    if (selectedPhotos.size === 0) return;
+
+    try {
+      let successCount = 0;
+      for (const photoId of Array.from(selectedPhotos)) {
+        const photo = photos.find(p => p.id === photoId);
+        if (!photo) continue;
+
+        let localPath = photo.local_path;
+        if (!localPath || !photo.is_available_offline) {
+          if (photo.isLocal) {
+            let assetUri = photo.uri;
+            try {
+              const assetInfo = await MediaLibrary.getAssetInfoAsync(photo.id);
+              assetUri = assetInfo.localUri || assetInfo.uri;
+            } catch (infoErr) {
+              console.log("Failed to get asset info:", infoErr);
+            }
+            localPath = assetUri;
+          } else {
+            const tempLocalUri = `${FileSystem.documentDirectory}temp_dock_${Date.now()}_${photo.filename}`;
+            const { uri, status } = await FileSystem.downloadAsync(photo.uri, tempLocalUri, {
+              headers: photo.headers
+            });
+            if (status !== 200) continue;
+            localPath = uri;
+          }
+        }
+
+        await sendToDock(localPath, photo.filename, 'photo', 'image/jpeg');
+        successCount++;
+      }
+      setSelectedPhotos(new Set());
+      Alert.alert('Success', `Shared ${successCount} photos to the Dock.`);
+    } catch (err) {
+      Alert.alert('Error', err.message || 'Could not send photos to the Dock.');
+    }
   };
 
 
@@ -1692,6 +1776,21 @@ export default function TimelineScreen({ navigation, route }) {
               >
                 <MaterialCommunityIcons name="safe" size={24} color={theme.text} />
                 <Text style={[styles.menuRowBtnText, { color: theme.text }]}>Move to Vault</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.menuRowBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                onPress={() => {
+                  setShowMoreActionsModal(false);
+                  if (moreActionsTargetPhoto) {
+                    handleSendSinglePhotoToDock(moreActionsTargetPhoto);
+                  } else {
+                    handleSendSelectedPhotosToDock();
+                  }
+                }}
+              >
+                <MaterialCommunityIcons name="cellphone-link" size={24} color={theme.text} />
+                <Text style={[styles.menuRowBtnText, { color: theme.text }]}>Send to Dock</Text>
               </TouchableOpacity>
             </View>
           </View>

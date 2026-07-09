@@ -10,37 +10,41 @@ import {
   Modal,
   KeyboardAvoidingView,
   Platform,
-  ScrollView,
   useWindowDimensions,
-  Image,
   Keyboard,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Circle } from 'react-native-svg';
 import { ThemeContext } from '../theme/ThemeContext';
 import { DockContext } from '../context/DockContext';
 import * as Sharing from 'expo-sharing';
+import * as MediaLibrary from 'expo-media-library';
+import * as DocumentPicker from 'expo-document-picker';
 
 export default function DockScreen({ navigation }) {
-  const { theme, isDark } = useContext(ThemeContext);
+  const { theme } = useContext(ThemeContext);
   const {
     isScanning,
     discoveredDevices,
     connectedDevice,
     dockItems,
     pairingPin,
-    setPairingPin,
     startDiscovery,
     stopDiscovery,
     pairDevice,
     disconnectDevice,
     deleteFromDock,
-    refreshDock,
+    sendToDock,
+    transferProgress,
   } = useContext(DockContext);
 
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const useSplitPane = isLandscape || width >= 768; // Split-pane layout for TV/Tablet/Landscape
   const isGridView = width > 480;
-  const numColumns = isGridView ? 3 : 1;
+  const numColumns = isGridView ? (useSplitPane ? 2 : 3) : 1;
 
   const [pinModalVisible, setPinModalVisible] = useState(false);
   const [targetDevice, setTargetDevice] = useState(null);
@@ -54,6 +58,10 @@ export default function DockScreen({ navigation }) {
   const [customPinText, setCustomPinText] = useState('');
   const [customIpLoading, setCustomIpLoading] = useState(false);
   const [customIpError, setCustomIpError] = useState('');
+
+  // TV focus indicators
+  const [focusedDeviceId, setFocusedDeviceId] = useState(null);
+  const [focusedItemId, setFocusedItemId] = useState(null);
 
   const handleCustomIpPairSubmit = async () => {
     console.log("[DockUI] handleCustomIpPairSubmit triggered for IP:", customIpText, "PIN:", customPinText);
@@ -78,6 +86,19 @@ export default function DockScreen({ navigation }) {
       setCustomIpError(err.message || 'Pairing failed. Check IP & PIN.');
     } finally {
       setCustomIpLoading(false);
+    }
+  };
+
+  const handleBrowseAndAddFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+      if (result.canceled) return;
+
+      const file = result.assets[0];
+      await sendToDock(file.uri, file.name, 'file', file.mimeType || 'application/octet-stream');
+    } catch (err) {
+      console.error("[DockUI] Error browsing/adding local file:", err);
+      Alert.alert("Error", err.message || "Failed to add file to Dock.");
     }
   };
 
@@ -133,21 +154,87 @@ export default function DockScreen({ navigation }) {
     if (!item.local_path) return;
 
     const lowerName = item.name.toLowerCase();
-    const isPdf = lowerName.endsWith('.pdf');
     const isImage = lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.png') || lowerName.endsWith('.webp');
+    const isVideo = lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.mkv') || lowerName.endsWith('.avi');
 
-    if (isPdf) {
-      navigation.navigate('PdfViewer', { pdfUri: item.local_path, fileName: item.name });
-    } else if (isImage) {
-      navigation.navigate('ImageViewer', { imageUri: item.local_path, fileName: item.name });
-    } else {
-      await Sharing.shareAsync(item.local_path);
+    const options = [
+      {
+        text: 'Open / View',
+        onPress: () => {
+          if (lowerName.endsWith('.pdf')) {
+            navigation.navigate('PdfViewer', { pdfUri: item.local_path, fileName: item.name });
+          } else if (isImage) {
+            navigation.navigate('ImageViewer', { imageUri: item.local_path, fileName: item.name });
+          } else {
+            Sharing.shareAsync(item.local_path);
+          }
+        }
+      },
+      {
+        text: 'Save to Device',
+        onPress: () => handleSaveToDevice(item)
+      },
+      {
+        text: 'Delete from Dock',
+        style: 'destructive',
+        onPress: () => deleteFromDock(item.id)
+      },
+      {
+        text: 'Cancel',
+        style: 'cancel'
+      }
+    ];
+
+    Alert.alert(
+      item.name,
+      'Select action:',
+      options,
+      { cancelable: true }
+    );
+  };
+
+  const handleSaveToDevice = async (item) => {
+    if (!item.local_path) {
+      Alert.alert('Error', 'File path is not available.');
+      return;
+    }
+
+    try {
+      const lowerName = item.name.toLowerCase();
+      const isImage = lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.png') || lowerName.endsWith('.webp');
+      const isVideo = lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.mkv') || lowerName.endsWith('.avi');
+
+      if (isImage || isVideo) {
+        const { status } = await MediaLibrary.requestPermissionsAsync(true);
+        if (status === 'granted') {
+          const fileUri = item.local_path.startsWith('file://') ? item.local_path : `file://${item.local_path}`;
+          await MediaLibrary.createAssetAsync(fileUri);
+          Alert.alert('Success', 'File successfully saved to photos/gallery!');
+        } else {
+          Alert.alert('Permission Denied', 'Media library access is required to save photos/videos.');
+        }
+      } else {
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(item.local_path);
+        } else {
+          Alert.alert('Error', 'Sharing/Saving is not available on this device.');
+        }
+      }
+    } catch (e) {
+      console.error('[Save to Device] Error:', e);
+      Alert.alert('Error', e.message || 'Failed to save file.');
     }
   };
 
   const renderDeviceItem = ({ item }) => (
     <TouchableOpacity
-      style={[styles.deviceCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+      style={[
+        styles.deviceCard,
+        { backgroundColor: theme.surface, borderColor: theme.border },
+        focusedDeviceId === item.id && { borderColor: theme.primary, borderWidth: 2 }
+      ]}
+      onFocus={() => setFocusedDeviceId(item.id)}
+      onBlur={() => setFocusedDeviceId(null)}
       onPress={() => handleDevicePress(item)}
     >
       <View style={styles.deviceIconContainer}>
@@ -168,6 +255,8 @@ export default function DockScreen({ navigation }) {
   const renderDockItem = ({ item }) => {
     const isPdf = item.name.toLowerCase().endsWith('.pdf');
     const isImage = item.name.toLowerCase().endsWith('.jpg') || item.name.toLowerCase().endsWith('.jpeg') || item.name.toLowerCase().endsWith('.png') || item.name.toLowerCase().endsWith('.webp');
+    const isTransferring = item.sync_status === 'transferring';
+    const progress = (transferProgress && transferProgress[item.id]) || { percent: 0, bytesWritten: 0 };
 
     let iconName = 'file-document-outline';
     if (isPdf) iconName = 'file-pdf-box';
@@ -181,37 +270,64 @@ export default function DockScreen({ navigation }) {
           {
             backgroundColor: theme.surface,
             borderColor: theme.border,
-            width: isGridView ? (width - 48) / 3 : '100%',
+            margin: isGridView ? 6 : 0,
+            marginBottom: 12,
+            opacity: isTransferring ? 0.7 : 1,
+            flex: isGridView ? 1 : 0,
           },
+          focusedItemId === item.id && { borderColor: theme.primary, borderWidth: 2 }
         ]}
-        onPress={() => handleItemPress(item)}
+        onFocus={() => setFocusedItemId(item.id)}
+        onBlur={() => setFocusedItemId(null)}
+        onPress={() => !isTransferring && handleItemPress(item)}
+        disabled={isTransferring}
       >
         <View style={styles.dockItemHeader}>
-          <MaterialCommunityIcons
-            name={iconName}
-            size={40}
-            color={item.type === 'vault' ? '#ff9500' : theme.primary}
-          />
-          {item.sync_status !== 'synced' ? (
+          <View style={styles.iconContainer}>
+            {isTransferring && (
+              <Svg style={styles.progressRing} width={50} height={50}>
+                <Circle
+                  stroke={theme.primary}
+                  fill="transparent"
+                  strokeWidth={3}
+                  r={22}
+                  cx={25}
+                  cy={25}
+                  strokeDasharray={2 * Math.PI * 22}
+                  strokeDashoffset={2 * Math.PI * 22 * (1 - progress.percent / 100)}
+                  strokeLinecap="round"
+                />
+              </Svg>
+            )}
+            <MaterialCommunityIcons
+              name={iconName}
+              size={34}
+              color={item.type === 'vault' ? '#ff9500' : theme.primary}
+            />
+          </View>
+          {isTransferring ? (
+            <Text style={[styles.progressPercent, { color: theme.primary, fontSize: 11, fontWeight: 'bold' }]}>
+              {progress.percent}%
+            </Text>
+          ) : item.sync_status === 'pending_download' || item.sync_status === 'pending_upload' ? (
             <ActivityIndicator size="small" color={theme.primary} />
-          ) : (
-            <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
-          )}
+          ) : null}
         </View>
         <View style={styles.dockItemDetails}>
           <Text style={[styles.dockItemName, { color: theme.text }]} numberOfLines={1}>
             {item.name}
           </Text>
           <Text style={[styles.dockItemSize, { color: theme.textSecondary }]}>
-            {(item.size_bytes / 1024).toFixed(1)} KB
+            {isTransferring
+              ? `Syncing (${progress.percent}%)`
+              : `${(item.size_bytes / 1024).toFixed(1)} KB`}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={() => deleteFromDock(item.id)}
-        >
-          <Ionicons name="close-circle" size={20} color="#ff3b30" />
-        </TouchableOpacity>
+        {!isTransferring && (
+          <View style={{ padding: 6 }}>
+            <Ionicons name="ellipsis-vertical" size={18} color={theme.textSecondary} />
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -219,16 +335,18 @@ export default function DockScreen({ navigation }) {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>Direct Dock</Text>
+        <Text style={[styles.headerTitle, { color: theme.text }]}>Stark Dock</Text>
         {connectedDevice ? (
-          <TouchableOpacity style={styles.disconnectBtn} onPress={disconnectDevice}>
-            <Text style={styles.disconnectText}>Disconnect</Text>
-          </TouchableOpacity>
+          !useSplitPane && (
+            <TouchableOpacity style={styles.disconnectBtn} onPress={disconnectDevice}>
+              <Text style={styles.disconnectText}>Disconnect</Text>
+            </TouchableOpacity>
+          )
         ) : (
           <View style={{ flexDirection: 'row', gap: 16, alignItems: 'center' }}>
             <TouchableOpacity
               onPress={() => {
-                console.log("[DockUI] Link button clicked. Setting customIpModalVisible to true.");
+                console.log("[DockUI] Link button clicked.");
                 setCustomIpText(Platform.OS === 'android' ? '10.0.2.2' : '');
                 setCustomPinText('');
                 setCustomIpError('');
@@ -239,79 +357,171 @@ export default function DockScreen({ navigation }) {
               <Ionicons name="link" size={22} color={theme.primary} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.scanBtn} onPress={startDiscovery}>
-              {isScanning ? (
-                <ActivityIndicator size="small" color={theme.primary} />
-              ) : (
-                <Ionicons name="sync" size={20} color={theme.primary} />
-              )}
+              <Ionicons name="sync" size={20} color={theme.primary} />
             </TouchableOpacity>
           </View>
         )}
       </View>
 
-      {connectedDevice ? (
-        <View style={[styles.connectedBanner, { backgroundColor: theme.primary + '15' }]}>
-          <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
-          <Text style={[styles.connectedText, { color: theme.text }]}>
-            Connected to {connectedDevice.name} ({connectedDevice.ip})
-          </Text>
-        </View>
-      ) : (
-        <>
-          <View style={[styles.searchingBanner, { backgroundColor: '#ff950015' }]}>
-            <ActivityIndicator size="small" color="#ff9500" style={{ marginRight: 8 }} />
-            <Text style={[styles.searchingText, { color: theme.text }]}>
-              Searching for active devices on local network...
-            </Text>
-          </View>
-          {pairingPin && (
-            <View style={[styles.pinContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-              <Text style={[styles.pinLabel, { color: theme.textSecondary }]}>YOUR PAIRING PIN</Text>
-              <Text style={[styles.pinCode, { color: theme.primary }]}>{pairingPin}</Text>
+      <View style={[styles.mainLayout, useSplitPane ? styles.rowDirection : styles.columnDirection]}>
+
+        {/* Left Column / Top Section */}
+        <View style={useSplitPane ? styles.leftPane : styles.topPane}>
+          {connectedDevice ? (
+            <View style={styles.connectedPaneContent}>
+              <View style={[styles.connectedBanner, { backgroundColor: theme.primary + '15' }]}>
+                <Ionicons name="checkmark-circle" size={20} color="#4CAF50" />
+                <Text style={[styles.connectedText, { color: theme.text }]}>Connected</Text>
+              </View>
+
+              {/* Central Connection Card */}
+              <View style={[styles.connectionCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <View style={styles.connectionNodes}>
+
+                  {/* This Device Node */}
+                  <View style={styles.node}>
+                    <View style={[styles.nodeIconWrapper, { borderColor: theme.primary, backgroundColor: theme.primary + '15' }]}>
+                      <Ionicons name="phone-portrait" size={22} color={theme.primary} />
+                    </View>
+                    <Text style={[styles.nodeLabel, { color: theme.text }]} numberOfLines={1}>This Device</Text>
+                  </View>
+
+                  {/* Sync Line Bridge */}
+                  <View style={styles.bridgeStrip}>
+                    <View style={[styles.bridgeLine, { backgroundColor: theme.border }]}>
+                      <View style={[styles.bridgePulse, { backgroundColor: '#4CAF50' }]} />
+                    </View>
+                    <View style={[styles.bridgeDot, { backgroundColor: '#4CAF50' }]} />
+                  </View>
+
+                  {/* Remote Node */}
+                  <View style={styles.node}>
+                    <View style={[styles.nodeIconWrapper, { borderColor: '#4CAF50', backgroundColor: '#4CAF5015' }]}>
+                      <Ionicons
+                        name={connectedDevice.name.toLowerCase().includes('phone') || connectedDevice.name.toLowerCase().includes('mobile') ? 'phone-portrait' : 'desktop'}
+                        size={22}
+                        color="#4CAF50"
+                      />
+                    </View>
+                    <Text style={[styles.nodeLabel, { color: theme.text }]} numberOfLines={1}>
+                      {connectedDevice.name}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {useSplitPane && (
+                <TouchableOpacity style={[styles.disconnectBtnLarge, { backgroundColor: '#ff3b3015', borderColor: '#ff3b30' }]} onPress={disconnectDevice}>
+                  <Ionicons name="log-out-outline" size={18} color="#ff3b30" />
+                  <Text style={styles.disconnectTextLarge}>Disconnect</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <View style={styles.disconnectedPaneContent}>
+              <View style={[styles.searchingBanner, { backgroundColor: '#ff950015' }]}>
+                <ActivityIndicator size="small" color="#ff9500" style={{ marginRight: 8 }} />
+                <Text style={[styles.searchingText, { color: theme.text }]}>Searching for devices...</Text>
+              </View>
+
+              {pairingPin && (
+                <View style={styles.pairingPanelContainer}>
+                  <Text style={[styles.pinLabelText, { color: theme.textSecondary }]}>ENTER PIN ON ANOTHER DEVICE</Text>
+                  <View style={styles.pinBoxesRow}>
+                    {pairingPin.split('').map((char, i) => (
+                      <View key={i} style={[styles.pinDigitBox, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                        <Text style={[styles.pinDigitText, { color: theme.primary }]}>{char}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {useSplitPane && (
+                <View style={styles.sidebarWidescreenActions}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setCustomIpText(Platform.OS === 'android' ? '10.0.2.2' : '');
+                      setCustomPinText('');
+                      setCustomIpError('');
+                      setCustomIpModalVisible(true);
+                    }}
+                    style={[styles.sidebarActionBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  >
+                    <Ionicons name="link" size={18} color={theme.primary} />
+                    <Text style={[styles.sidebarActionText, { color: theme.text }]}>Pair via Custom IP</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={startDiscovery}
+                    style={[styles.sidebarActionBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  >
+                    <Ionicons name="sync" size={18} color={theme.primary} />
+                    <Text style={[styles.sidebarActionText, { color: theme.text }]}>Refresh Scan</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           )}
-        </>
-      )}
+        </View>
 
-      {connectedDevice ? (
-        <FlatList
-          data={dockItems}
-          keyExtractor={(item) => item.id}
-          renderItem={renderDockItem}
-          numColumns={numColumns}
-          key={numColumns} // Force re-render on grid change
-          contentContainerStyle={styles.listContainer}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <MaterialCommunityIcons name="dock-window" size={64} color={theme.textSecondary} />
-              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-                Your Dock is empty.
-              </Text>
-              <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
-                Pin files from Photos, Drive, or Vault to share them.
-              </Text>
-            </View>
-          }
-        />
-      ) : (
-        <FlatList
-          data={discoveredDevices}
-          keyExtractor={(item) => item.id}
-          renderItem={renderDeviceItem}
-          contentContainerStyle={styles.listContainer}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Ionicons name="wifi" size={64} color={theme.textSecondary} />
-              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-                No devices found.
-              </Text>
-              <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
-                Make sure the other device is on the same Wi-Fi and has Dock open.
-              </Text>
-            </View>
-          }
-        />
-      )}
+        {/* Right Column / Bottom Section */}
+        <View style={useSplitPane ? styles.rightPane : styles.bottomPane}>
+          {connectedDevice ? (
+            <>
+              <FlatList
+                data={dockItems}
+                keyExtractor={(item) => item.id}
+                renderItem={renderDockItem}
+                numColumns={numColumns}
+                key={numColumns} // Force re-render on grid change
+                contentContainerStyle={styles.listContainer}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <MaterialCommunityIcons name="dock-window" size={64} color={theme.textSecondary} />
+                    <Text style={[styles.emptyText, { color: theme.textSecondary }]}>Your Dock is empty.</Text>
+                    <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
+                      Pin files from Photos, Drive, or Vault, or select a local file.
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.emptyAddBtn, { backgroundColor: theme.primary }]}
+                      onPress={handleBrowseAndAddFile}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="add" size={20} color="#fff" style={{ marginRight: 6 }} />
+                      <Text style={[styles.emptyAddBtnText, { color: '#fff' }]}>Add Local File</Text>
+                    </TouchableOpacity>
+                  </View>
+                }
+              />
+              <TouchableOpacity
+                style={[styles.fab, { backgroundColor: theme.primary }]}
+                onPress={handleBrowseAndAddFile}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add" size={28} color="#fff" />
+              </TouchableOpacity>
+            </>
+          ) : (
+            <FlatList
+              data={discoveredDevices}
+              keyExtractor={(item) => item.id}
+              renderItem={renderDeviceItem}
+              contentContainerStyle={styles.listContainer}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="wifi" size={64} color={theme.textSecondary} />
+                  <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No devices found.</Text>
+                  <Text style={[styles.emptySubtext, { color: theme.textSecondary }]}>
+                    Make sure the other device is on the same Wi-Fi and has Dock open.
+                  </Text>
+                </View>
+              }
+            />
+          )}
+        </View>
+
+      </View>
 
       {/* 4-Digit PIN Modal */}
       {pinModalVisible && (
@@ -446,7 +656,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingVertical: 12,
   },
   headerTitle: {
     fontSize: 24,
@@ -468,27 +678,30 @@ const styles = StyleSheet.create({
   connectedBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    marginHorizontal: 20,
-    borderRadius: 8,
-    marginBottom: 16,
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 320,
   },
   connectedText: {
     marginLeft: 8,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   searchingBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    marginHorizontal: 20,
-    borderRadius: 8,
-    marginBottom: 16,
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 320,
   },
   searchingText: {
-    fontWeight: '500',
+    fontWeight: '600',
+    marginLeft: 8,
   },
   listContainer: {
     paddingHorizontal: 20,
@@ -535,6 +748,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  iconContainer: {
+    width: 50,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    marginRight: 6,
+  },
+  progressRing: {
+    position: 'absolute',
+    transform: [{ rotate: '-90deg' }],
+  },
+  progressPercent: {
+    marginLeft: 4,
+  },
   dockItemDetails: {
     flex: 1,
   },
@@ -564,13 +792,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     paddingHorizontal: 32,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
   },
   modalContent: {
     width: '100%',
@@ -644,23 +865,208 @@ const styles = StyleSheet.create({
     padding: 24,
     zIndex: 999,
   },
-  pinContainer: {
-    marginHorizontal: 20,
-    marginBottom: 16,
+  mainLayout: {
+    flex: 1,
+  },
+  rowDirection: {
+    flexDirection: 'row',
+  },
+  columnDirection: {
+    flexDirection: 'column',
+  },
+  leftPane: {
+    flex: 4,
+    paddingHorizontal: 20,
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rightPane: {
+    flex: 6,
+  },
+  topPane: {
+    flex: 0,
+    paddingBottom: 8,
+    alignItems: 'center',
+  },
+  bottomPane: {
+    flex: 1,
+  },
+  connectedPaneContent: {
+    alignItems: 'center',
+    gap: 16,
+    paddingVertical: 12,
+    width: '100%',
+  },
+  disconnectedPaneContent: {
+    alignItems: 'center',
+    gap: 16,
+    paddingVertical: 12,
+    width: '100%',
+  },
+  sidebarWidescreenActions: {
+    width: '100%',
+    maxWidth: 320,
+    gap: 12,
+    marginTop: 16,
+  },
+  sidebarActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    width: '100%',
+  },
+  sidebarActionText: {
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  disconnectBtnLarge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 16,
+    width: '100%',
+    maxWidth: 320,
+  },
+  disconnectTextLarge: {
+    color: '#ff3b30',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  connectionCard: {
+    width: '100%',
+    maxWidth: 320,
+    borderWidth: 1,
+    borderRadius: 24,
     padding: 16,
+  },
+  connectionNodes: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  node: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  nodeIconWrapper: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  nodeLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    width: '100%',
+  },
+  nodeSub: {
+    fontSize: 10,
+    marginTop: 2,
+    textAlign: 'center',
+    width: '100%',
+  },
+  bridgeStrip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  bridgeLine: {
+    width: '100%',
+    height: 2,
+    borderRadius: 1,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  bridgePulse: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: '50%',
+    opacity: 0.6,
+  },
+  bridgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginTop: 4,
+  },
+  pairingPanelContainer: {
+    width: '100%',
+    maxWidth: 320,
+    alignItems: 'center',
+    padding: 16,
+    borderRadius: 24,
+  },
+  pinLabelText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  pinBoxesRow: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    width: '100%',
+  },
+  pinDigitBox: {
+    flex: 1,
+    maxWidth: 60,
+    height: 54,
     borderRadius: 12,
     borderWidth: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  pinLabel: {
-    fontSize: 12,
+  pinDigitText: {
+    fontSize: 22,
     fontWeight: 'bold',
-    letterSpacing: 1.5,
   },
-  pinCode: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    letterSpacing: 6,
-    marginTop: 8,
+  emptyAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    marginTop: 16,
+  },
+  emptyAddBtnText: {
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4.65,
+    elevation: 8,
   },
 });

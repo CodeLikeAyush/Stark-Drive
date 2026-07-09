@@ -24,6 +24,7 @@ import AlbumDetailsScreen from '../screens/AlbumDetailsScreen';
 import CredentialFormScreen from '../screens/CredentialFormScreen';
 import ChangeVaultPinScreen from '../screens/ChangeVaultPinScreen';
 import ContactsScreen from '../screens/ContactsScreen';
+import DockScreen from '../screens/DockScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -53,6 +54,8 @@ function MainTabs() {
             iconName = focused ? 'folder' : 'folder-outline';
           } else if (route.name === 'AccountTab') {
             iconName = focused ? 'person' : 'person-outline';
+          } else if (route.name === 'DockTab') {
+            iconName = focused ? 'file-tray-full' : 'file-tray-full-outline';
           }
 
           if (route.name === 'VaultTab') {
@@ -77,6 +80,11 @@ function MainTabs() {
         name="VaultTab"
         component={VaultStack}
         options={{ title: 'Vault' }}
+      />
+      <Tab.Screen
+        name="DockTab"
+        component={DockScreen}
+        options={{ title: 'Dock', headerShown: false }}
       />
       <Tab.Screen
         name="AccountTab"

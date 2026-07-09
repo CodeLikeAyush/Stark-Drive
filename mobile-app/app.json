@@ -23,19 +23,29 @@
               "com.adobe.pdf"
             ]
           }
-        ]
+        ],
+        "NSBonjourServices": [
+          "_starkdrive-dock._tcp"
+        ],
+        "NSLocalNetworkUsageDescription": "This app uses the local network to discover other Stark Drive Docks."
       }
     },
     "android": {
       "permissions": [
         "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_MULTICAST_STATE",
         "READ_CONTACTS",
         "WRITE_CONTACTS",
         "INTERNET",
         "VIBRATE",
         "SYSTEM_ALERT_WINDOW",
-        "DOWNLOAD_WITHOUT_NOTIFICATION"
+        "DOWNLOAD_WITHOUT_NOTIFICATION",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "ACCESS_MEDIA_LOCATION",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",

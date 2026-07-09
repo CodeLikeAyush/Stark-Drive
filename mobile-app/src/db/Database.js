@@ -2,111 +2,119 @@ import * as SQLite from 'expo-sqlite';
 
 let db = null;
 
-export const initDB = async () => {
-  if (db) return db;
-  
+const createTables = (database) => {
+  database.execSync(`
+    PRAGMA journal_mode = WAL;
+    DROP TABLE IF EXISTS offline_files;
+    DROP TABLE IF EXISTS offline_photos;
+    
+    CREATE TABLE IF NOT EXISTS files (
+      id TEXT PRIMARY KEY NOT NULL,
+      is_vault INTEGER NOT NULL,
+      parent_id TEXT,
+      original_filename TEXT NOT NULL,
+      content_type TEXT,
+      size_bytes INTEGER,
+      local_path TEXT,
+      is_available_offline INTEGER DEFAULT 0,
+      has_thumbnail INTEGER DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    
+    CREATE TABLE IF NOT EXISTS photos (
+      id TEXT PRIMARY KEY NOT NULL,
+      uri TEXT,
+      filename TEXT NOT NULL,
+      creation_time INTEGER NOT NULL,
+      local_path TEXT,
+      is_available_offline INTEGER DEFAULT 0,
+      remote_file_id TEXT,
+      has_thumbnail INTEGER DEFAULT 0
+    );
+    
+    CREATE TABLE IF NOT EXISTS action_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      action_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      payload TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS albums (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      cover_photo_id TEXT,
+      photo_count INTEGER DEFAULT 0,
+      creation_time INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS album_photos (
+      album_id TEXT NOT NULL,
+      photo_id TEXT NOT NULL,
+      PRIMARY KEY (album_id, photo_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS credentials (
+      id TEXT PRIMARY KEY NOT NULL,
+      title TEXT NOT NULL,
+      type TEXT NOT NULL,
+      encrypted_data TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS cached_contacts (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      phone_numbers TEXT,
+      emails TEXT,
+      status TEXT NOT NULL,
+      last_updated INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dock_cache (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      mime_type TEXT,
+      local_path TEXT,
+      sync_status TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+
+  // Migration: Add has_thumbnail column to files table if it doesn't exist
   try {
-    db = await SQLite.openDatabaseAsync('starkdrive.db');
-    
-    // Create tables
-    await db.execAsync(`
-      PRAGMA journal_mode = WAL;
-      DROP TABLE IF EXISTS offline_files;
-      DROP TABLE IF EXISTS offline_photos;
-      
-      CREATE TABLE IF NOT EXISTS files (
-        id TEXT PRIMARY KEY NOT NULL,
-        is_vault INTEGER NOT NULL,
-        parent_id TEXT,
-        original_filename TEXT NOT NULL,
-        content_type TEXT,
-        size_bytes INTEGER,
-        local_path TEXT,
-        is_available_offline INTEGER DEFAULT 0,
-        has_thumbnail INTEGER DEFAULT 0,
-        created_at INTEGER NOT NULL
-      );
-      
-      CREATE TABLE IF NOT EXISTS photos (
-        id TEXT PRIMARY KEY NOT NULL,
-        uri TEXT,
-        filename TEXT NOT NULL,
-        creation_time INTEGER NOT NULL,
-        local_path TEXT,
-        is_available_offline INTEGER DEFAULT 0,
-        remote_file_id TEXT,
-        has_thumbnail INTEGER DEFAULT 0
-      );
-      
-      CREATE TABLE IF NOT EXISTS action_queue (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        action_type TEXT NOT NULL,
-        entity_id TEXT NOT NULL,
-        payload TEXT,
-        created_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS albums (
-        id TEXT PRIMARY KEY NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        cover_photo_id TEXT,
-        photo_count INTEGER DEFAULT 0,
-        creation_time INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS album_photos (
-        album_id TEXT NOT NULL,
-        photo_id TEXT NOT NULL,
-        PRIMARY KEY (album_id, photo_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS credentials (
-        id TEXT PRIMARY KEY NOT NULL,
-        title TEXT NOT NULL,
-        type TEXT NOT NULL,
-        encrypted_data TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS cached_contacts (
-        id TEXT PRIMARY KEY NOT NULL,
-        name TEXT NOT NULL,
-        phone_numbers TEXT,
-        emails TEXT,
-        status TEXT NOT NULL,
-        last_updated INTEGER NOT NULL
-      );
-    `);
-
-
-    // Migration: Add has_thumbnail column to files table if it doesn't exist
-    try {
-      await db.execAsync(`ALTER TABLE files ADD COLUMN has_thumbnail INTEGER DEFAULT 0;`);
-      console.log("Migration: added has_thumbnail column to files table");
-    } catch (e) {
-      // Column probably already exists, which is fine
-    }
-
-    // Migration: Add has_thumbnail column to photos table if it doesn't exist
-    try {
-      await db.execAsync(`ALTER TABLE photos ADD COLUMN has_thumbnail INTEGER DEFAULT 0;`);
-      console.log("Migration: added has_thumbnail column to photos table");
-    } catch (e) {
-      // Column probably already exists, which is fine
-    }
-    
-    console.log("Database initialized successfully");
-    return db;
-  } catch (error) {
-    console.error("Failed to initialize database", error);
-    throw error;
+    database.execSync(`ALTER TABLE files ADD COLUMN has_thumbnail INTEGER DEFAULT 0;`);
+    console.log("Migration: added has_thumbnail column to files table");
+  } catch (e) {
+    // Column probably already exists, which is fine
   }
+
+  // Migration: Add has_thumbnail column to photos table if it doesn't exist
+  try {
+    database.execSync(`ALTER TABLE photos ADD COLUMN has_thumbnail INTEGER DEFAULT 0;`);
+    console.log("Migration: added has_thumbnail column to photos table");
+  } catch (e) {
+    // Column probably already exists, which is fine
+  }
+};
+
+export const initDB = async () => {
+  return getDB();
 };
 
 export const getDB = () => {
   if (!db) {
-    db = SQLite.openDatabaseSync('starkdrive.db');
+    try {
+      db = SQLite.openDatabaseSync('starkdrive.db');
+      createTables(db);
+      console.log("Database initialized successfully (sync)");
+    } catch (error) {
+      console.error("Failed to initialize database synchronously", error);
+      throw error;
+    }
   }
   return db;
 };
@@ -332,6 +340,49 @@ export const deleteContactCache = async (id) => {
 export const clearContactCache = async () => {
   const database = getDB();
   await database.runAsync(`DELETE FROM cached_contacts`);
+};
+
+// --- Dock Cache ---
+
+export const upsertDockItem = async (item) => {
+  const database = getDB();
+  await database.runAsync(
+    `INSERT INTO dock_cache (id, name, size_bytes, type, mime_type, local_path, sync_status, updated_at) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET 
+       name=excluded.name, 
+       size_bytes=excluded.size_bytes, 
+       type=excluded.type, 
+       mime_type=excluded.mime_type, 
+       local_path=excluded.local_path, 
+       sync_status=excluded.sync_status, 
+       updated_at=excluded.updated_at`,
+    [
+      item.id.toString(),
+      item.name || 'Unknown',
+      item.sizeBytes || item.size || 0,
+      item.type || 'file',
+      item.mimeType || item.contentType || null,
+      item.localPath || item.local_path || null,
+      item.syncStatus || item.sync_status || 'pending_download',
+      item.updatedAt || item.updated_at || Date.now()
+    ]
+  );
+};
+
+export const getDockItems = async () => {
+  const database = getDB();
+  return await database.getAllAsync(`SELECT * FROM dock_cache ORDER BY updated_at DESC`);
+};
+
+export const deleteDockItem = async (id) => {
+  const database = getDB();
+  await database.runAsync(`DELETE FROM dock_cache WHERE id = ?`, [id.toString()]);
+};
+
+export const clearDockCache = async () => {
+  const database = getDB();
+  await database.runAsync(`DELETE FROM dock_cache`);
 };
 
 

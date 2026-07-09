@@ -19,6 +19,7 @@ export const DockContext = createContext({
   connectedDevice: null,
   dockItems: [],
   pairingPin: null,
+  transferProgress: {},
   startDiscovery: (isAutoRefresh) => { },
   stopDiscovery: () => { },
   sendToDock: async (itemPath, name, type, mimeType) => { },
@@ -38,6 +39,7 @@ export const DockProvider = ({ children }) => {
   const [connectedDevice, setConnectedDevice] = useState(null);
   const [dockItems, setDockItems] = useState([]);
   const [pairingPin, setPairingPin] = useState(null);
+  const [transferProgress, setTransferProgress] = useState({});
 
   const zeroconfRef = useRef(null);
   const serverRef = useRef(null);
@@ -52,6 +54,22 @@ export const DockProvider = ({ children }) => {
     deviceNameRef.current = deviceName;
   }, [deviceName]);
 
+  // Generate a fresh, single PIN and write it to SecureStore when disconnected
+  useEffect(() => {
+    if (!connectedDevice) {
+      const initPairingPin = async () => {
+        try {
+          const pin = Math.floor(1000 + Math.random() * 9000).toString();
+          await SecureStore.setItemAsync('dock_pairing_pin', pin);
+          setPairingPin(pin);
+        } catch (e) {
+          console.error("[Dock] Failed to initialize/store pairing PIN:", e);
+        }
+      };
+      initPairingPin();
+    }
+  }, [connectedDevice]);
+
   // Load items from local SQLite cache
   const refreshDock = async () => {
     try {
@@ -63,20 +81,6 @@ export const DockProvider = ({ children }) => {
   };
 
   useEffect(() => {
-    const initPairingPin = async () => {
-      try {
-        let pin = await SecureStore.getItemAsync('dock_pairing_pin');
-        if (!pin) {
-          pin = Math.floor(1000 + Math.random() * 9000).toString();
-          await SecureStore.setItemAsync('dock_pairing_pin', pin);
-        }
-        setPairingPin(pin);
-      } catch (e) {
-        console.error("[Dock] Failed to initialize pairing PIN:", e);
-      }
-    };
-
-    initPairingPin();
     refreshDock();
     setupTCPServer();
     setupZeroconf();
@@ -95,6 +99,45 @@ export const DockProvider = ({ children }) => {
       }
     };
   }, []);
+
+  const sendPing = (ip) => {
+    try {
+      const clientSocket = TcpSocket.createConnection({ port: TCP_PORT, host: ip }, () => {
+        clientSocket.write(
+          createFrame({
+            action: 'PING',
+            deviceId: deviceNameRef.current,
+          })
+        );
+      });
+
+      clientSocket.setTimeout(3000);
+      clientSocket.on('timeout', () => {
+        clientSocket.destroy();
+      });
+      clientSocket.on('data', () => {
+        clientSocket.destroy();
+      });
+      clientSocket.on('error', () => {
+        clientSocket.destroy();
+      });
+    } catch (e) {
+      console.error("[Dock Client] Failed to send ping:", e);
+    }
+  };
+
+  // Heartbeat PING interval when connected to a device
+  useEffect(() => {
+    if (!connectedDevice) return;
+
+    const interval = setInterval(() => {
+      sendPing(connectedDevice.ip);
+    }, 5000); // Send PING every 5 seconds
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [connectedDevice]);
 
   // Setup mDNS Discovery
   const setupZeroconf = () => {
@@ -268,13 +311,20 @@ export const DockProvider = ({ children }) => {
             // Generate or check pairing PIN if needed
             if (metadata.action === 'PAIR_REQUEST') {
               const savedPin = await SecureStore.getItemAsync('dock_pairing_pin');
+              console.log("[Dock TCP Server] PAIR_REQUEST PIN verification. Client sent:", metadata.pin, "Server saved:", savedPin);
               if (metadata.pin === savedPin) {
                 const safeKey = `trusted_${metadata.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
                 await SecureStore.setItemAsync(safeKey, 'true');
+                
+                let remoteIp = socket.remoteAddress;
+                if (remoteIp && remoteIp.includes('::ffff:')) {
+                  remoteIp = remoteIp.replace('::ffff:', '');
+                }
+                setConnectedDevice({ name: metadata.deviceId, ip: remoteIp });
+                
                 socket.write(createFrame({ action: 'PAIR_SUCCESS', deviceName: deviceNameRef.current }));
               } else {
-                socket.write(createFrame({ action: 'PAIR_FAILURE', message: 'Incorrect PIN' }));
-                socket.destroy();
+                socket.end(createFrame({ action: 'PAIR_FAILURE', message: 'Incorrect PIN' }));
               }
               return;
             }
@@ -283,22 +333,19 @@ export const DockProvider = ({ children }) => {
             if (metadata.action !== 'PING') {
               if (!metadata.deviceId) {
                 console.error("[Dock TCP] Missing deviceId in metadata");
-                socket.write(createFrame({ action: 'UNAUTHORIZED' }));
-                socket.destroy();
+                socket.end(createFrame({ action: 'UNAUTHORIZED' }));
                 return;
               }
               const safeKey = `trusted_${metadata.deviceId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
               const isTrusted = await SecureStore.getItemAsync(safeKey);
               if (!isTrusted) {
-                socket.write(createFrame({ action: 'UNAUTHORIZED' }));
-                socket.destroy();
+                socket.end(createFrame({ action: 'UNAUTHORIZED' }));
                 return;
               }
             }
 
             if (metadata.action === 'PING') {
-              socket.write(createFrame({ action: 'PONG', deviceName: deviceNameRef.current }));
-              socket.destroy();
+              socket.end(createFrame({ action: 'PONG', deviceName: deviceNameRef.current }));
               return;
             }
 
@@ -363,8 +410,7 @@ export const DockProvider = ({ children }) => {
               await upsertDockItem(newItem);
               refreshDock();
 
-              socket.write(createFrame({ action: 'FILE_ACK', itemId: metadata.itemId }));
-              socket.destroy();
+              socket.end(createFrame({ action: 'FILE_ACK', itemId: metadata.itemId }));
 
               // Reset state
               expectedJsonLength = -1;
@@ -382,7 +428,13 @@ export const DockProvider = ({ children }) => {
       } catch (err) {
         console.error("[Dock TCP] Error during chunk processing:", err);
       } finally {
-        socket.resume(); // Always resume processing when chunk processing finishes
+        if (socket && !socket.destroyed) {
+          try {
+            socket.resume(); // Always resume processing when chunk processing finishes
+          } catch (e) {
+            console.error("[Dock TCP] Failed to resume socket:", e);
+          }
+        }
       }
     });
 
@@ -406,6 +458,20 @@ export const DockProvider = ({ children }) => {
   // Connect to another device and complete 4-digit PIN pairing
   const pairDevice = async (ip, pin) => {
     return new Promise((resolve, reject) => {
+      let resolvedOrRejected = false;
+      const safeResolve = (value) => {
+        if (!resolvedOrRejected) {
+          resolvedOrRejected = true;
+          resolve(value);
+        }
+      };
+      const safeReject = (error) => {
+        if (!resolvedOrRejected) {
+          resolvedOrRejected = true;
+          reject(error);
+        }
+      };
+
       try {
         const clientSocket = TcpSocket.createConnection({ port: TCP_PORT, host: ip }, () => {
           console.log("[Dock Client] Connected for pairing with:", ip);
@@ -419,33 +485,49 @@ export const DockProvider = ({ children }) => {
           );
         });
 
+        clientSocket.setTimeout(10000);
+
+        clientSocket.on('timeout', () => {
+          console.log("[Dock Client] Pairing connection timed out");
+          clientSocket.destroy();
+          safeReject(new Error('Pairing connection timed out.'));
+        });
+
         clientSocket.on('data', async (data) => {
           try {
-            let expectedLength = data.readUInt32BE(0);
-            const jsonStr = data.slice(4, 4 + expectedLength).toString('utf8');
+            const dataBuffer = Buffer.from(data);
+            let expectedLength = dataBuffer.readUInt32BE(0);
+            const jsonStr = dataBuffer.slice(4, 4 + expectedLength).toString('utf8');
             const response = JSON.parse(jsonStr);
 
             if (response.action === 'PAIR_SUCCESS') {
               const safeKey = `trusted_${response.deviceName.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
               await SecureStore.setItemAsync(safeKey, 'true');
               setConnectedDevice({ name: response.deviceName, ip: ip });
-              resolve(response.deviceName);
+              safeResolve(response.deviceName);
             } else {
-              reject(new Error(response.message || 'Pairing failed.'));
+              safeReject(new Error(response.message || 'Pairing failed.'));
             }
           } catch (e) {
             console.error("[Dock Client] Error in pairing data receiver:", e);
-            reject(e);
+            safeReject(e);
           } finally {
             clientSocket.destroy();
           }
         });
 
         clientSocket.on('error', (err) => {
-          reject(err);
+          console.error("[Dock Client] Socket error during pairing:", err);
+          clientSocket.destroy();
+          safeReject(err);
+        });
+
+        clientSocket.on('close', (hadError) => {
+          console.log("[Dock Client] Socket closed during pairing. hadError:", hadError);
+          safeReject(new Error('Connection closed before pairing completed.'));
         });
       } catch (err) {
-        reject(err);
+        safeReject(err);
       }
     });
   };
@@ -510,8 +592,9 @@ export const DockProvider = ({ children }) => {
 
         clientSocket.on('data', async (data) => {
           try {
-            let expectedLength = data.readUInt32BE(0);
-            const jsonStr = data.slice(4, 4 + expectedLength).toString('utf8');
+            const dataBuffer = Buffer.from(data);
+            let expectedLength = dataBuffer.readUInt32BE(0);
+            const jsonStr = dataBuffer.slice(4, 4 + expectedLength).toString('utf8');
             const response = JSON.parse(jsonStr);
 
             if (response.action === 'FILE_ACK' && response.itemId === fileId) {
@@ -580,6 +663,7 @@ export const DockProvider = ({ children }) => {
       pairDevice,
       disconnectDevice,
       refreshDock,
+      transferProgress,
     }}>
       {children}
     </DockContext.Provider>
