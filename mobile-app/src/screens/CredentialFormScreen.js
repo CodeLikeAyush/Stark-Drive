@@ -424,47 +424,7 @@ export default function CredentialFormScreen({ route, navigation }) {
     }
   };
 
-  const TypeSelector = () => {
-    const types = [
-      { id: 'PASSWORD', label: 'Password', icon: 'key' },
-      { id: 'CARD', label: 'Card', icon: 'credit-card' },
-      { id: 'BANK', label: 'Bank Info', icon: 'bank' },
-      { id: 'RECOVERY_CODE', label: 'Recovery Code', icon: 'shield-key' },
-      { id: 'PIN', label: 'PIN Code', icon: 'numeric' },
-    ];
 
-    return (
-      <View style={styles.typeSelectorContainer}>
-        <Text style={[styles.label, { color: theme.textSecondary }]}>Credential Type</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typeScroll}>
-          {types.map((t) => {
-            const isSelected = type === t.id;
-            return (
-              <TouchableOpacity
-                key={t.id}
-                style={[
-                  styles.typeButton,
-                  isSelected ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.surface, borderColor: theme.border }
-                ]}
-                onPress={() => !isEditing && setType(t.id)}
-                disabled={isEditing}
-              >
-                <MaterialCommunityIcons 
-                  name={t.icon} 
-                  size={18} 
-                  color={isSelected ? '#fff' : theme.text} 
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={[styles.typeButtonText, { color: isSelected ? '#fff' : theme.text }]}>
-                  {t.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
-    );
-  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
@@ -504,7 +464,41 @@ export default function CredentialFormScreen({ route, navigation }) {
               />
 
               {/* Type Selector */}
-              <TypeSelector />
+              <View style={styles.typeSelectorContainer}>
+                <Text style={[styles.label, { color: theme.textSecondary }]}>Credential Type</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.typeScroll}>
+                  {[
+                    { id: 'PASSWORD', label: 'Password', icon: 'key' },
+                    { id: 'CARD', label: 'Card', icon: 'credit-card' },
+                    { id: 'BANK', label: 'Bank Info', icon: 'bank' },
+                    { id: 'RECOVERY_CODE', label: 'Recovery Code', icon: 'shield-key' },
+                    { id: 'PIN', label: 'PIN Code', icon: 'numeric' },
+                  ].map((t) => {
+                    const isSelected = type === t.id;
+                    return (
+                      <TouchableOpacity
+                        key={t.id}
+                        style={[
+                          styles.typeButton,
+                          isSelected ? { backgroundColor: theme.primary, borderColor: theme.primary } : { backgroundColor: theme.surface, borderColor: theme.border }
+                        ]}
+                        onPress={() => !isEditing && setType(t.id)}
+                        disabled={isEditing}
+                      >
+                        <MaterialCommunityIcons 
+                          name={t.icon} 
+                          size={18} 
+                          color={isSelected ? '#fff' : theme.text} 
+                          style={{ marginRight: 6 }}
+                        />
+                        <Text style={[styles.typeButtonText, { color: isSelected ? '#fff' : theme.text }]}>
+                          {t.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
 
               {/* Dynamic fields based on Type */}
               {renderFormFields()}

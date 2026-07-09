@@ -40,7 +40,8 @@ export default function VaultScreen({ route, navigation }) {
   }
 
   // Active Tab: 'FILES' | 'CREDENTIALS'
-  const [activeTab, setActiveTab] = useState('FILES');
+  const [activeTab, setActiveTab] = useState('CREDENTIALS');
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState('ALL');
 
   // Search query state
   const [searchQuery, setSearchQuery] = useState('');
@@ -61,13 +62,14 @@ export default function VaultScreen({ route, navigation }) {
   const [isDetailsVisible, setIsDetailsVisible] = useState(false);
   const [showSecrets, setShowSecrets] = useState({});
 
-  // In-memory filtered credentials based on search query
+  // In-memory filtered credentials based on search query and type filter
   const filteredCredentials = credentials.filter(c => {
     const q = searchQuery.toLowerCase().trim();
-    return (
+    const matchesQuery = !q ||
       (c.title && c.title.toLowerCase().includes(q)) ||
-      (c.type && c.type.toLowerCase().includes(q))
-    );
+      (c.type && c.type.toLowerCase().includes(q));
+    const matchesType = selectedTypeFilter === 'ALL' || c.type === selectedTypeFilter;
+    return matchesQuery && matchesType;
   });
 
   // In-memory filtered files based on search query
@@ -780,16 +782,13 @@ export default function VaultScreen({ route, navigation }) {
           <Text style={[styles.fileSize, { color: theme.textSecondary }]}>
             {item.type.charAt(0) + item.type.slice(1).toLowerCase().replace('_', ' ')}
           </Text>
-          <Text style={[styles.fileSize, { color: theme.textSecondary }]}> • </Text>
-          <MaterialCommunityIcons 
-            name={item.id.toString().startsWith('local_') ? "cloud-upload-outline" : "cloud-check"} 
-            size={12} 
-            color={item.id.toString().startsWith('local_') ? "#FF9500" : "#4CAF50"} 
-            style={{ marginRight: 3 }}
-          />
-          <Text style={[styles.fileSize, { color: item.id.toString().startsWith('local_') ? "#FF9500" : "#4CAF50", fontWeight: '600', fontSize: 11 }]}>
-            {item.id.toString().startsWith('local_') ? 'Local Only' : 'Synced'}
-          </Text>
+          <View style={{ marginLeft: 8 }}>
+            <MaterialCommunityIcons 
+              name={item.id.toString().startsWith('local_') ? "cloud-off-outline" : "cloud-check"} 
+              size={15} 
+              color={item.id.toString().startsWith('local_') ? theme.textSecondary : "#4CAF50"} 
+            />
+          </View>
         </View>
       </View>
       <TouchableOpacity onPress={() => handleCredentialPress(item)} style={{ padding: 4 }}>
@@ -807,31 +806,30 @@ export default function VaultScreen({ route, navigation }) {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
-
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]} edges={['left', 'right']}>
       <View style={[styles.tabletWrapper, { maxWidth: numColumns > 1 ? 1200 : 700 }]}>
         {/* Tab Selector */}
         <View style={[styles.tabContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <TouchableOpacity
-            style={[styles.tabButton, activeTab === 'FILES' && { backgroundColor: theme.primary }]}
-            onPress={() => setActiveTab('FILES')}
-          >
-            <Text style={[styles.tabButtonText, { color: activeTab === 'FILES' ? '#fff' : theme.textSecondary }]}>Files</Text>
-          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'CREDENTIALS' && { backgroundColor: theme.primary }]}
             onPress={() => setActiveTab('CREDENTIALS')}
           >
             <Text style={[styles.tabButtonText, { color: activeTab === 'CREDENTIALS' ? '#fff' : theme.textSecondary }]}>Credentials</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'FILES' && { backgroundColor: theme.primary }]}
+            onPress={() => setActiveTab('FILES')}
+          >
+            <Text style={[styles.tabButtonText, { color: activeTab === 'FILES' ? '#fff' : theme.textSecondary }]}>Files</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Search Bar for Vault */}
         <View style={[styles.searchContainer, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <MaterialCommunityIcons name="magnify" size={24} color={theme.textSecondary} style={styles.searchIcon} />
+          <MaterialCommunityIcons name="magnify" size={20} color={theme.textSecondary} style={styles.searchIcon} />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
-            placeholder={activeTab === 'FILES' ? "Search files..." : "Search credentials..."}
+            placeholder="Search..."
             placeholderTextColor={theme.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -839,12 +837,56 @@ export default function VaultScreen({ route, navigation }) {
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <MaterialCommunityIcons name="close-circle" size={20} color={theme.textSecondary} />
+              <MaterialCommunityIcons name="close-circle" size={16} color={theme.textSecondary} />
             </TouchableOpacity>
           )}
         </View>
 
-        {loading || (activeTab === 'CREDENTIALS' && loadingCredentials) ? (
+        {/* Quick Filter Selection Bubbles for Credentials */}
+        {activeTab === 'CREDENTIALS' && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScroll}
+            style={styles.filterScrollContainer}
+          >
+            {[
+              { id: 'ALL', label: 'All', icon: 'apps' },
+              { id: 'PASSWORD', label: 'Passwords', icon: 'key' },
+              { id: 'CARD', label: 'Cards', icon: 'credit-card' },
+              { id: 'BANK', label: 'Bank Info', icon: 'bank' },
+              { id: 'RECOVERY_CODE', label: 'Recovery Codes', icon: 'shield-key' },
+              { id: 'PIN', label: 'PIN Codes', icon: 'numeric' },
+            ].map((f) => {
+              const isSelected = selectedTypeFilter === f.id;
+              return (
+                <TouchableOpacity
+                  key={f.id}
+                  style={[
+                    styles.filterBubble,
+                    isSelected 
+                      ? { backgroundColor: theme.primary, borderColor: theme.primary } 
+                      : { backgroundColor: theme.surface, borderColor: theme.border }
+                  ]}
+                  onPress={() => setSelectedTypeFilter(f.id)}
+                  activeOpacity={0.8}
+                >
+                  <MaterialCommunityIcons 
+                    name={f.icon} 
+                    size={14} 
+                    color={isSelected ? '#fff' : theme.text} 
+                    style={{ marginRight: 4 }}
+                  />
+                  <Text style={[styles.filterBubbleText, { color: isSelected ? '#fff' : theme.text }]}>
+                    {f.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        {(activeTab === 'FILES' && loading) || (activeTab === 'CREDENTIALS' && loadingCredentials && credentials.length === 0) ? (
           <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
         ) : (
           <FlashList
@@ -1441,15 +1483,16 @@ const styles = StyleSheet.create({
   tabContainer: {
     flexDirection: 'row',
     marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 8,
+    marginTop: 12,
+    marginBottom: 6,
     borderRadius: 10,
     borderWidth: 1,
     overflow: 'hidden',
+    height: 40,
   },
   tabButton: {
     flex: 1,
-    paddingVertical: 10,
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1520,18 +1563,45 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    margin: 16,
+    marginHorizontal: 16,
+    marginTop: 6,
+    marginBottom: 6,
     paddingHorizontal: 12,
-    height: 48,
-    borderRadius: 24,
+    height: 42,
+    borderRadius: 21,
     borderWidth: 1,
   },
   searchIcon: {
-    marginRight: 8,
+    marginRight: 6,
   },
   searchInput: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 14,
     height: '100%',
+    padding: 0,
+  },
+  filterScrollContainer: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 8,
+    flexGrow: 0,
+  },
+  filterScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  filterBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  filterBubbleText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

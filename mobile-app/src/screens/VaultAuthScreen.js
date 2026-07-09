@@ -243,6 +243,26 @@ export default function VaultAuthScreen({ navigation }) {
     }
   };
 
+  // Auto-submit PIN when all 6 digits are entered
+  useEffect(() => {
+    if (!isSettingUp && pin.length === 6) {
+      handlePinSubmit();
+    }
+  }, [pin, isSettingUp]);
+
+  useEffect(() => {
+    if (isSettingUp && step === 'ENTER' && pin.length === 6) {
+      handlePinSubmit();
+    }
+  }, [pin, isSettingUp, step]);
+
+  useEffect(() => {
+    if (isSettingUp && step === 'CONFIRM' && confirmPin.length === 6) {
+      handlePinSubmit();
+    }
+  }, [confirmPin, isSettingUp, step]);
+
+
 
   if (loading) {
     return (
