@@ -13,6 +13,7 @@ import {
   useWindowDimensions,
   Keyboard,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -22,6 +23,7 @@ import { DockContext } from '../context/DockContext';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
 import * as DocumentPicker from 'expo-document-picker';
+import AlertModal from '../components/AlertModal';
 
 export default function DockScreen({ navigation }) {
   const { theme } = useContext(ThemeContext);
@@ -63,6 +65,23 @@ export default function DockScreen({ navigation }) {
   const [focusedDeviceId, setFocusedDeviceId] = useState(null);
   const [focusedItemId, setFocusedItemId] = useState(null);
 
+  // Custom Alert states
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertTitle, setAlertTitle] = useState('');
+  const [alertMessage, setAlertMessage] = useState('');
+  const [alertIcon, setAlertIcon] = useState('information-circle');
+
+  const triggerAlert = (title, message, icon = 'information-circle') => {
+    setAlertTitle(title);
+    setAlertMessage(message);
+    setAlertIcon(icon);
+    setAlertVisible(true);
+  };
+
+  // Custom Item Menu state
+  const [selectedMenuItem, setSelectedMenuItem] = useState(null);
+  const [focusedMenuIndex, setFocusedMenuIndex] = useState(null);
+
   const handleCustomIpPairSubmit = async () => {
     console.log("[DockUI] handleCustomIpPairSubmit triggered for IP:", customIpText, "PIN:", customPinText);
     if (!customIpText.trim()) {
@@ -98,7 +117,7 @@ export default function DockScreen({ navigation }) {
       await sendToDock(file.uri, file.name, 'file', file.mimeType || 'application/octet-stream');
     } catch (err) {
       console.error("[DockUI] Error browsing/adding local file:", err);
-      Alert.alert("Error", err.message || "Failed to add file to Dock.");
+      triggerAlert("Error", err.message || "Failed to add file to Dock.", "alert-circle");
     }
   };
 
@@ -152,50 +171,26 @@ export default function DockScreen({ navigation }) {
   const handleItemPress = async (item) => {
     if (item.sync_status !== 'synced') return;
     if (!item.local_path) return;
+    setSelectedMenuItem(item);
+  };
 
+  const handleOpenItem = (item) => {
+    if (!item || !item.local_path) return;
     const lowerName = item.name.toLowerCase();
     const isImage = lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || lowerName.endsWith('.png') || lowerName.endsWith('.webp');
-    const isVideo = lowerName.endsWith('.mp4') || lowerName.endsWith('.mov') || lowerName.endsWith('.mkv') || lowerName.endsWith('.avi');
 
-    const options = [
-      {
-        text: 'Open / View',
-        onPress: () => {
-          if (lowerName.endsWith('.pdf')) {
-            navigation.navigate('PdfViewer', { pdfUri: item.local_path, fileName: item.name });
-          } else if (isImage) {
-            navigation.navigate('ImageViewer', { imageUri: item.local_path, fileName: item.name });
-          } else {
-            Sharing.shareAsync(item.local_path);
-          }
-        }
-      },
-      {
-        text: 'Save to Device',
-        onPress: () => handleSaveToDevice(item)
-      },
-      {
-        text: 'Delete from Dock',
-        style: 'destructive',
-        onPress: () => deleteFromDock(item.id)
-      },
-      {
-        text: 'Cancel',
-        style: 'cancel'
-      }
-    ];
-
-    Alert.alert(
-      item.name,
-      'Select action:',
-      options,
-      { cancelable: true }
-    );
+    if (lowerName.endsWith('.pdf')) {
+      navigation.navigate('PdfViewer', { pdfUri: item.local_path, fileName: item.name });
+    } else if (isImage) {
+      navigation.navigate('ImageViewer', { imageUri: item.local_path, fileName: item.name });
+    } else {
+      Sharing.shareAsync(item.local_path);
+    }
   };
 
   const handleSaveToDevice = async (item) => {
     if (!item.local_path) {
-      Alert.alert('Error', 'File path is not available.');
+      triggerAlert('Error', 'File path is not available.', 'alert-circle');
       return;
     }
 
@@ -209,20 +204,20 @@ export default function DockScreen({ navigation }) {
         if (status === 'granted') {
           const fileUri = item.local_path.startsWith('file://') ? item.local_path : `file://${item.local_path}`;
           await MediaLibrary.createAssetAsync(fileUri);
-          Alert.alert('Success', 'File successfully saved to photos/gallery!');
+          triggerAlert('Success', 'File successfully saved to photos/gallery!', 'checkmark-circle');
         } else {
-          Alert.alert('Permission Denied', 'Media library access is required to save photos/videos.');
+          triggerAlert('Permission Denied', 'Media library access is required to save photos/videos.', 'warning');
         }
       } else {
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(item.local_path);
         } else {
-          Alert.alert('Error', 'Sharing/Saving is not available on this device.');
+          triggerAlert('Error', 'Sharing/Saving is not available on this device.', 'alert-circle');
         }
       }
     } catch (e) {
       console.error('[Save to Device] Error:', e);
-      Alert.alert('Error', e.message || 'Failed to save file.');
+      triggerAlert('Error', e.message || 'Failed to save file.', 'alert-circle');
     }
   };
 
@@ -524,125 +519,229 @@ export default function DockScreen({ navigation }) {
       </View>
 
       {/* 4-Digit PIN Modal */}
-      {pinModalVisible && (
-        <View style={styles.absoluteModalOverlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}
-          >
-            <Text style={[styles.modalTitle, { color: theme.text }]}>
-              Pair with {targetDevice?.name}
-            </Text>
-            <Text style={[styles.modalSubtitle, { color: theme.textSecondary }]}>
-              Enter the 4-digit PIN displayed on the other device's screen.
-            </Text>
+      <Modal
+        visible={pinModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPinModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.absoluteModalOverlay}
+        >
+          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border, maxHeight: '90%' }]}>
+            <ScrollView contentContainerStyle={{ alignItems: 'center' }} style={{ width: '100%' }} showsVerticalScrollIndicator={false} bounces={false}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>
+                Pair with {targetDevice?.name}
+              </Text>
+              <Text style={[styles.modalSubtitle, { color: theme.textSecondary }]}>
+                Enter the 4-digit PIN displayed on the other device's screen.
+              </Text>
 
-            <TextInput
-              style={[
-                styles.pinInput,
-                { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
-              ]}
-              value={pinText}
-              onChangeText={setPinText}
-              keyboardType="number-pad"
-              maxLength={4}
-              secureTextEntry
-              autoFocus
-            />
+              <TextInput
+                style={[
+                  styles.pinInput,
+                  { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                ]}
+                value={pinText}
+                onChangeText={setPinText}
+                keyboardType="number-pad"
+                maxLength={4}
+                autoFocus
+                textContentType="none"
+                autoComplete="off"
+                importantForAutofill="no"
+              />
 
-            {pairingError ? (
-              <Text style={styles.errorText}>{pairingError}</Text>
-            ) : null}
+              {pairingError ? (
+                <Text style={styles.errorText}>{pairingError}</Text>
+              ) : null}
 
-            <View style={styles.buttonRow}>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: theme.border }]}
-                onPress={() => setPinModalVisible(false)}
-              >
-                <Text style={[styles.modalBtnText, { color: theme.text }]}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: theme.primary }]}
-                onPress={handlePairSubmit}
-                disabled={pairingLoading}
-              >
-                {pairingLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={[styles.modalBtnText, { color: '#fff' }]}>Verify</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      )}
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: theme.border }]}
+                  onPress={() => setPinModalVisible(false)}
+                >
+                  <Text style={[styles.modalBtnText, { color: theme.text }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: theme.primary }]}
+                  onPress={handlePairSubmit}
+                  disabled={pairingLoading}
+                >
+                  {pairingLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={[styles.modalBtnText, { color: '#fff' }]}>Verify</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {/* Pair via IP Modal */}
-      {customIpModalVisible && (
-        <View style={styles.absoluteModalOverlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border }]}
-          >
-            <Text style={[styles.modalTitle, { color: theme.text }]}>
-              Pair via IP Address
+      <Modal
+        visible={customIpModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCustomIpModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.absoluteModalOverlay}
+        >
+          <View style={[styles.modalContent, { backgroundColor: theme.surface, borderColor: theme.border, maxHeight: '90%' }]}>
+            <ScrollView contentContainerStyle={{ alignItems: 'center' }} style={{ width: '100%' }} showsVerticalScrollIndicator={false} bounces={false}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>
+                Pair via IP Address
+              </Text>
+              <Text style={[styles.modalSubtitle, { color: theme.textSecondary }]}>
+                Enter the IP address of the target device and its 4-digit PIN.
+              </Text>
+
+              <TextInput
+                style={[
+                  styles.modalInput,
+                  { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }
+                ]}
+                placeholder="IP Address (e.g. 10.0.2.2)"
+                placeholderTextColor={theme.textSecondary}
+                value={customIpText}
+                onChangeText={setCustomIpText}
+                keyboardType="numeric"
+              />
+
+              <TextInput
+                style={[
+                  styles.pinInput,
+                  { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                ]}
+                placeholder="PIN"
+                placeholderTextColor={theme.textSecondary}
+                value={customPinText}
+                onChangeText={setCustomPinText}
+                keyboardType="number-pad"
+                maxLength={4}
+                textContentType="none"
+                autoComplete="off"
+                importantForAutofill="no"
+              />
+
+              {customIpError ? (
+                <Text style={styles.errorText}>{customIpError}</Text>
+              ) : null}
+
+              <View style={styles.buttonRow}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: theme.border }]}
+                  onPress={() => setCustomIpModalVisible(false)}
+                >
+                  <Text style={[styles.modalBtnText, { color: theme.text }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: theme.primary }]}
+                  onPress={handleCustomIpPairSubmit}
+                  disabled={customIpLoading}
+                >
+                  {customIpLoading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={[styles.modalBtnText, { color: '#fff' }]}>Verify</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Custom Item Options Menu Modal (Bottom Sheet style) */}
+      <Modal
+        visible={selectedMenuItem !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedMenuItem(null)}
+      >
+        <TouchableOpacity
+          style={styles.sheetOverlay}
+          activeOpacity={1}
+          onPress={() => setSelectedMenuItem(null)}
+        >
+          <View style={[styles.bottomSheet, { backgroundColor: theme.surface, maxHeight: '90%' }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={[styles.sheetTitle, { color: theme.text }]} numberOfLines={1}>
+              {selectedMenuItem?.name}
             </Text>
-            <Text style={[styles.modalSubtitle, { color: theme.textSecondary }]}>
-              Enter the IP address of the target device and its 4-digit PIN.
-            </Text>
 
-            <TextInput
-              style={[
-                styles.modalInput,
-                { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }
-              ]}
-              placeholder="IP Address (e.g. 10.0.2.2)"
-              placeholderTextColor={theme.textSecondary}
-              value={customIpText}
-              onChangeText={setCustomIpText}
-              keyboardType="numeric"
-            />
-
-            <TextInput
-              style={[
-                styles.pinInput,
-                { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
-              ]}
-              placeholder="PIN"
-              placeholderTextColor={theme.textSecondary}
-              value={customPinText}
-              onChangeText={setCustomPinText}
-              keyboardType="number-pad"
-              maxLength={4}
-              secureTextEntry
-            />
-
-            {customIpError ? (
-              <Text style={styles.errorText}>{customIpError}</Text>
-            ) : null}
-
-            <View style={styles.buttonRow}>
+            <ScrollView style={{ width: '100%' }} showsVerticalScrollIndicator={false} bounces={false}>
               <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: theme.border }]}
-                onPress={() => setCustomIpModalVisible(false)}
+                style={[
+                  styles.sheetButton,
+                  { borderBottomColor: theme.border },
+                  focusedMenuIndex === 0 && { backgroundColor: theme.primary + '15' }
+                ]}
+                onFocus={() => setFocusedMenuIndex(0)}
+                onBlur={() => setFocusedMenuIndex(null)}
+                onPress={() => {
+                  const item = selectedMenuItem;
+                  setSelectedMenuItem(null);
+                  handleOpenItem(item);
+                }}
               >
-                <Text style={[styles.modalBtnText, { color: theme.text }]}>Cancel</Text>
+                <Ionicons name="eye-outline" size={22} color={theme.text} style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: theme.text }]}>Open / View</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: theme.primary }]}
-                onPress={handleCustomIpPairSubmit}
-                disabled={customIpLoading}
+                style={[
+                  styles.sheetButton,
+                  { borderBottomColor: theme.border },
+                  focusedMenuIndex === 1 && { backgroundColor: theme.primary + '15' }
+                ]}
+                onFocus={() => setFocusedMenuIndex(1)}
+                onBlur={() => setFocusedMenuIndex(null)}
+                onPress={() => {
+                  const item = selectedMenuItem;
+                  setSelectedMenuItem(null);
+                  handleSaveToDevice(item);
+                }}
               >
-                {customIpLoading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={[styles.modalBtnText, { color: '#fff' }]}>Verify</Text>
-                )}
+                <Ionicons name="download-outline" size={22} color={theme.text} style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: theme.text }]}>Save to Device</Text>
               </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      )}
+
+              <TouchableOpacity
+                style={[
+                  styles.sheetButton,
+                  { borderBottomColor: theme.border, borderBottomWidth: 0 },
+                  focusedMenuIndex === 2 && { backgroundColor: '#ff3b3015' }
+                ]}
+                onFocus={() => setFocusedMenuIndex(2)}
+                onBlur={() => setFocusedMenuIndex(null)}
+                onPress={() => {
+                  const item = selectedMenuItem;
+                  setSelectedMenuItem(null);
+                  deleteFromDock(item.id);
+                }}
+              >
+                <Ionicons name="trash-outline" size={22} color="#ff3b30" style={styles.sheetIcon} />
+                <Text style={[styles.sheetButtonText, { color: '#ff3b30', fontWeight: '600' }]}>Delete from Dock</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Custom Alert Modal */}
+      <AlertModal
+        visible={alertVisible}
+        title={alertTitle}
+        message={alertMessage}
+        icon={alertIcon}
+        onClose={() => setAlertVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -1068,5 +1167,53 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4.65,
     elevation: 8,
+  },
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  bottomSheet: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
+    padding: 24,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#ccc',
+    marginBottom: 16,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+    width: '100%',
+  },
+  sheetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    paddingVertical: 16,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  sheetIcon: {
+    marginRight: 16,
+  },
+  sheetButtonText: {
+    fontSize: 16,
   },
 });
